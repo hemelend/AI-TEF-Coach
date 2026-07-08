@@ -58,10 +58,24 @@ interface TEFQuestion {
 
 interface TEFExercise {
   topic: string;
+  subTopic?: string;
   duration: number;
   dialogue: DialogueLine[];
   questions: TEFQuestion[];
   transcript?: string;
+}
+
+interface AdaptiveHistoryEntry {
+  id: string;
+  timestamp: string;
+  topic: string;
+  difficulty: "B1" | "B2" | "C1";
+  questionType: "20-30" | "35-40" | "mixed";
+  score: number;
+  total: number;
+  elapsedTime: number;
+  weakSkills: string[];
+  dialogueTopicSummary?: string;
 }
 
 interface TopicStat {
@@ -309,6 +323,8 @@ export default function App() {
     "Double negatives": { correct: 6, total: 14 },   // 43%
   });
 
+  const [adaptiveHistory, setAdaptiveHistory] = useState<AdaptiveHistoryEntry[]>([]);
+
   // Phase 8 - AI Coach State
   const [coachFeedback, setCoachFeedback] = useState<string | null>(null);
   const [loadingCoach, setLoadingCoach] = useState<boolean>(false);
@@ -395,6 +411,104 @@ export default function App() {
       }
     } else {
       localStorage.setItem("tef_week_stats", JSON.stringify({ correct: 21, total: 25 }));
+    }
+
+    const storedAdaptiveHistory = localStorage.getItem("tef_adaptive_history");
+    if (storedAdaptiveHistory) {
+      try {
+        setAdaptiveHistory(JSON.parse(storedAdaptiveHistory));
+      } catch (e) {
+        console.error("Error parsing stored adaptive history:", e);
+      }
+    } else {
+      const initialHistory: AdaptiveHistoryEntry[] = [
+        {
+          id: "mock-1",
+          timestamp: new Date(Date.now() - 6 * 24 * 3600 * 1000).toISOString(),
+          topic: "housing",
+          difficulty: "B2",
+          questionType: "20-30",
+          score: 4,
+          total: 5,
+          elapsedTime: 92,
+          weakSkills: ["Implicit opinion"],
+          dialogueTopicSummary: "Débat sur la colocation intergénérationnelle en France."
+        },
+        {
+          id: "mock-2",
+          timestamp: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
+          topic: "work",
+          difficulty: "C1",
+          questionType: "35-40",
+          score: 3,
+          total: 5,
+          elapsedTime: 118,
+          weakSkills: ["Double negatives", "Concession"],
+          dialogueTopicSummary: "Entretien d'embauche tendu sur le télétravail et la flexibilité."
+        },
+        {
+          id: "mock-3",
+          timestamp: new Date(Date.now() - 4 * 24 * 3600 * 1000).toISOString(),
+          topic: "travel",
+          difficulty: "B1",
+          questionType: "20-30",
+          score: 5,
+          total: 5,
+          elapsedTime: 65,
+          weakSkills: [],
+          dialogueTopicSummary: "Message vocal d'une agence de voyage annulant un vol d'avion."
+        },
+        {
+          id: "mock-4",
+          timestamp: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+          topic: "environment",
+          difficulty: "B2",
+          questionType: "mixed",
+          score: 4,
+          total: 5,
+          elapsedTime: 88,
+          weakSkills: ["Double negatives"],
+          dialogueTopicSummary: "Discussion sur l'interdiction des emballages plastiques à usage unique."
+        },
+        {
+          id: "mock-5",
+          timestamp: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
+          topic: "shopping",
+          difficulty: "B2",
+          questionType: "20-30",
+          score: 5,
+          total: 5,
+          elapsedTime: 72,
+          weakSkills: [],
+          dialogueTopicSummary: "Micro-trottoir sur les habitudes d'achat en friperie et seconde main."
+        },
+        {
+          id: "mock-6",
+          timestamp: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+          topic: "health",
+          difficulty: "C1",
+          questionType: "35-40",
+          score: 4,
+          total: 5,
+          elapsedTime: 125,
+          weakSkills: ["Concession"],
+          dialogueTopicSummary: "Débat radiophonique sur l'utilisation de l'IA en médecine."
+        },
+        {
+          id: "mock-7",
+          timestamp: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+          topic: "technology",
+          difficulty: "B2",
+          questionType: "mixed",
+          score: 5,
+          total: 5,
+          elapsedTime: 95,
+          weakSkills: [],
+          dialogueTopicSummary: "Message explicatif sur la transition numérique d'une entreprise locale."
+        }
+      ];
+      setAdaptiveHistory(initialHistory);
+      localStorage.setItem("tef_adaptive_history", JSON.stringify(initialHistory));
     }
   }, []);
 
@@ -493,6 +607,7 @@ export default function App() {
       localStorage.removeItem("tef_skill_stats");
       localStorage.removeItem("tef_today_stats");
       localStorage.removeItem("tef_week_stats");
+      localStorage.removeItem("tef_adaptive_history");
       setTotalQuestions(0);
       setCorrectQuestions(0);
       setTotalSessions(0);
@@ -504,6 +619,7 @@ export default function App() {
         "Negation": { correct: 0, total: 0 },
         "Double negatives": { correct: 0, total: 0 },
       });
+      setAdaptiveHistory([]);
       setTodayStats({ correct: 0, total: 0 });
       setWeekStats({ correct: 0, total: 0 });
       setCoachFeedback(null);
@@ -537,15 +653,76 @@ export default function App() {
     setError(null);
     setLoading(true);
 
+    // Analyze weaknesses for adaptive generation
+    const topicsList = ["work", "travel", "housing", "environment", "shopping", "education", "health", "technology"];
+    const topicAccuracies = topicsList.map(topicId => {
+      const stat = topicStats[topicId] || { correct: 0, total: 0 };
+      const accuracy = stat.total > 0 ? (stat.correct / stat.total) * 100 : 100;
+      return { id: topicId, accuracy, total: stat.total };
+    });
+    const sortedTopics = [...topicAccuracies].sort((a, b) => {
+      if (a.total === 0 && b.total > 0) return -1;
+      if (b.total === 0 && a.total > 0) return 1;
+      return a.accuracy - b.accuracy;
+    });
+    const weakTopic = sortedTopics[0]?.id || "work";
+
+    const sortedSkills = (Object.entries(skillStats) as [string, { correct: number; total: number }][])
+      .map(([skill, stat]) => {
+        const accuracy = stat.total > 0 ? (stat.correct / stat.total) * 100 : 100;
+        return { skill, accuracy, total: stat.total };
+      })
+      .sort((a, b) => {
+        if (a.total === 0 && b.total > 0) return -1;
+        if (b.total === 0 && a.total > 0) return 1;
+        return a.accuracy - b.accuracy;
+      });
+    const weakSkills = sortedSkills.map(s => s.skill);
+
+    let qTypeAccuracy = { "20-30": { correct: 0, total: 0 }, "35-40": { correct: 0, total: 0 } };
+    adaptiveHistory.forEach(h => {
+      if (h.questionType === "20-30" || h.questionType === "35-40") {
+        qTypeAccuracy[h.questionType].correct += h.score;
+        qTypeAccuracy[h.questionType].total += 5;
+      }
+    });
+    let weakQuestionType: "20-30" | "35-40" | "mixed" = "mixed";
+    const t2030 = qTypeAccuracy["20-30"];
+    const t3540 = qTypeAccuracy["35-40"];
+    const acc2030 = t2030.total > 0 ? t2030.correct / t2030.total : 1.0;
+    const acc3540 = t3540.total > 0 ? t3540.correct / t3540.total : 1.0;
+    if (t2030.total > 0 || t3540.total > 0) {
+      if (acc2030 < acc3540) {
+        weakQuestionType = "20-30";
+      } else if (acc3540 < acc2030) {
+        weakQuestionType = "35-40";
+      }
+    }
+
+    const pastSessions = adaptiveHistory.slice(-10).map(h => ({
+      topic: h.topic,
+      difficulty: h.difficulty,
+      questionType: h.questionType,
+      summary: h.dialogueTopicSummary || ""
+    }));
+
+    const adaptiveContext = {
+      weakTopic,
+      weakSkills,
+      weakQuestionType,
+      pastSessions
+    };
+
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          selectedTopic: selectedTopic === "random" ? undefined : selectedTopic,
+          selectedTopic: selectedTopic === "random" ? "adaptive" : selectedTopic,
           difficulty: difficulty,
-          questionType: questionType,
-          durationSec: durationSec
+          questionType: questionType === "mixed" ? "adaptive" : questionType,
+          durationSec: durationSec,
+          adaptiveContext
         }),
       });
 
@@ -955,6 +1132,49 @@ export default function App() {
       };
       setWeekStats(updatedWeek);
       localStorage.setItem("tef_week_stats", JSON.stringify(updatedWeek));
+
+      // Save Adaptive History Entry
+      const currentSessionWeakSkills: string[] = [];
+      exercise.questions.forEach((q, idx) => {
+        let skillKey = q.skillTested || "Implicit opinion";
+        if (skillKey.toLowerCase().includes("opinion") || skillKey.toLowerCase().includes("attitude")) {
+          skillKey = "Implicit opinion";
+        } else if (skillKey.toLowerCase().includes("concession") || skillKey.toLowerCase().includes("restriction")) {
+          skillKey = "Concession";
+        } else if (skillKey.toLowerCase().includes("recommend") || skillKey.toLowerCase().includes("conseil")) {
+          skillKey = "Recommendations";
+        } else if (skillKey.toLowerCase().includes("negation") || skillKey.toLowerCase().includes("négation")) {
+          skillKey = "Negation";
+        } else if (skillKey.toLowerCase().includes("double negative") || skillKey.toLowerCase().includes("double négation")) {
+          skillKey = "Double negatives";
+        } else {
+          const fallbacks = ["Implicit opinion", "Concession", "Recommendations", "Negation", "Double negatives"];
+          skillKey = fallbacks[idx % 5];
+        }
+
+        const chosen = selectedAnswers[q.id];
+        const isCorrect = chosen === q.correctAnswer;
+        if (!isCorrect && !currentSessionWeakSkills.includes(skillKey)) {
+          currentSessionWeakSkills.push(skillKey);
+        }
+      });
+
+      const newHistoryEntry: AdaptiveHistoryEntry = {
+        id: "session-" + Date.now(),
+        timestamp: new Date().toISOString(),
+        topic: exercise.topic || "general",
+        difficulty: activeDifficulty,
+        questionType: activeQuestionType === "mixed" ? "mixed" : (activeQuestionType as "20-30" | "35-40"),
+        score: score,
+        total: 5,
+        elapsedTime: elapsedTime,
+        weakSkills: currentSessionWeakSkills,
+        dialogueTopicSummary: exercise.subTopic || (exercise.dialogue && exercise.dialogue[0] ? exercise.dialogue[0].text.substring(0, 80) + "..." : "Sujet d'évaluation TEF")
+      };
+
+      const updatedHistory = [...adaptiveHistory, newHistoryEntry];
+      setAdaptiveHistory(updatedHistory);
+      localStorage.setItem("tef_adaptive_history", JSON.stringify(updatedHistory));
     }
 
     setQuizFinished(true);
@@ -1154,11 +1374,18 @@ export default function App() {
                     : "text-slate-700 hover:bg-slate-50 border border-slate-100 bg-slate-50/40"
                 }`}
               >
-                <span className="flex items-center gap-2">
+                <span className="flex items-center gap-2 w-full">
                   <span className="text-base leading-none">
                     {selectedTopic === "random" ? "☑" : "☐"}
                   </span>
-                  <span>Random Topic</span>
+                  <span className="flex items-center justify-between w-full">
+                    <span>Génération Adaptative</span>
+                    <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                      selectedTopic === "random" ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-600"
+                    }`}>
+                      🎯 IA
+                    </span>
+                  </span>
                 </span>
               </button>
 
@@ -1533,6 +1760,105 @@ export default function App() {
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Adaptive Generation & History Log */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4 text-left">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-black uppercase text-slate-400 tracking-wider font-display flex items-center gap-2">
+                      🔄 Historique d'Apprentissage Adaptatif (IA)
+                    </h3>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      Sessions d'écoute ciblées générées d'après l'analyse de vos faiblesses.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-md">
+                    Mode Adaptatif Actif 🎯
+                  </span>
+                </div>
+
+                {adaptiveHistory.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-6">
+                    Aucune session adaptative enregistrée pour le moment. Réalisez votre première épreuve !
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Thème & Scénario</th>
+                          <th className="py-2.5 px-3">Niveau</th>
+                          <th className="py-2.5 px-3">Section</th>
+                          <th className="py-2.5 px-3 text-center">Score</th>
+                          <th className="py-2.5 px-3">Points ciblés</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50 text-xs">
+                        {adaptiveHistory.slice().reverse().map((session) => (
+                          <tr key={session.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-3 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                              {new Date(session.timestamp).toLocaleDateString("fr-FR", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit"
+                              })}
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-800 capitalize flex items-center gap-1.5">
+                                <span>
+                                  {session.topic === "work" ? "💼" :
+                                   session.topic === "housing" ? "🏠" :
+                                   session.topic === "shopping" ? "🛒" :
+                                   session.topic === "travel" ? "✈️" :
+                                   session.topic === "technology" ? "💻" :
+                                   session.topic === "health" ? "🏥" : "🌱"}
+                                </span>
+                                <span>{session.topic}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1 max-w-sm">
+                                {session.dialogueTopicSummary}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="font-bold text-slate-700">{session.difficulty}</span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-500 whitespace-nowrap">
+                              {session.questionType === "20-30" ? "Sec. B/C (20-30)" :
+                               session.questionType === "35-40" ? "Sec. D (35-40)" : "Mixte (20-40)"}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span className={`inline-block font-black px-2 py-0.5 rounded text-[11px] font-mono ${
+                                session.score >= 4 ? "bg-emerald-50 text-emerald-700 font-bold" :
+                                session.score >= 3 ? "bg-amber-50 text-amber-700 font-bold" :
+                                "bg-red-50 text-red-700 font-bold"
+                              }`}>
+                                {session.score} / {session.total}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3">
+                              {session.weakSkills.length === 0 ? (
+                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50/50 px-1.5 py-0.5 rounded">
+                                  Sans erreur ✨
+                                </span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1">
+                                  {session.weakSkills.map((sk) => (
+                                    <span key={sk} className="text-[9px] font-bold text-red-600 bg-red-50/50 px-1.5 py-0.5 rounded">
+                                      {sk}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </motion.div>
           ) : loading ? (

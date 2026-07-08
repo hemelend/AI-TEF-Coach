@@ -186,14 +186,33 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    const { selectedTopic, difficulty = "B2", questionType = "mixed", durationSec = 90 } = req.body;
-    const topics = ["work", "travel", "housing", "environment", "shopping", "education", "health"];
-    const topic = selectedTopic && topics.includes(selectedTopic)
-      ? selectedTopic
-      : topics[Math.floor(Math.random() * topics.length)];
+    const { selectedTopic, difficulty = "B2", questionType = "mixed", durationSec = 90, adaptiveContext } = req.body;
+    const topics = ["work", "travel", "housing", "environment", "shopping", "education", "health", "technology"];
+    
+    // Adaptively determine the topic if random or adaptive is selected
+    let topic = selectedTopic;
+    if (!topic || topic === "random" || topic === "adaptive") {
+      if (adaptiveContext && adaptiveContext.weakTopic && topics.includes(adaptiveContext.weakTopic)) {
+        topic = adaptiveContext.weakTopic;
+        console.log(`[Adaptive Selection] Chosen weak topic: ${topic}`);
+      } else {
+        topic = topics[Math.floor(Math.random() * topics.length)];
+      }
+    }
 
     const level = ["B1", "B2", "C1"].includes(difficulty) ? difficulty : "B2";
-    const qType = ["20-30", "35-40", "mixed"].includes(questionType) ? questionType : "mixed";
+    
+    // Adaptively determine the question type if mixed/adaptive is selected
+    let qType = questionType;
+    if (qType === "mixed" || qType === "adaptive") {
+      if (adaptiveContext && adaptiveContext.weakQuestionType && ["20-30", "35-40", "mixed"].includes(adaptiveContext.weakQuestionType)) {
+        qType = adaptiveContext.weakQuestionType;
+        console.log(`[Adaptive Selection] Chosen weak questionType: ${qType}`);
+      } else {
+        qType = "mixed";
+      }
+    }
+
     const durationVal = [60, 90, 120].includes(Number(durationSec)) ? Number(durationSec) : 90;
 
     console.log(`Generating ${level} French TEF Canada exercise for topic: ${topic}, type: ${qType}, duration: ${durationVal}s`);
@@ -225,8 +244,34 @@ app.post("/api/generate", async (req, res) => {
       lengthDescription = "lasting approximately 90 seconds in spoken flow (about 12 to 18 total turn exchanges, around 180 to 250 words total)";
     }
 
+    // Build targeted adaptive learning instructions
+    let adaptivePromptSnippet = "";
+    if (adaptiveContext) {
+      const { weakSkills = [], pastSessions = [] } = adaptiveContext;
+      if (weakSkills.length > 0) {
+        adaptivePromptSnippet += `
+ADAPTIVE LEARNING TARGET:
+The student is currently struggling with these cognitive listening sub-skills: ${weakSkills.join(", ")}.
+You MUST design the dialogue and the 5 questions to specifically train and test these weaknesses:
+- Ensure the dialogue features multiple occurrences of these patterns (e.g., if 'Double negatives' is weak, include multiple double negatives like "Je ne dis pas que ce n'est pas..."; if 'Concession' is weak, include multiple concession structures; etc.).
+- Dedicate at least 2 of the 5 questions directly to testing these specific weak skills.
+`;
+      }
+      if (pastSessions.length > 0) {
+        // Avoid duplicates or highly similar scenarios
+        adaptivePromptSnippet += `
+PREVENT DUPLICATION (NEVER GENERATE IDENTICAL SESSIONS):
+Do NOT generate a dialogue, scenario, sub-topic, or questions similar to any of these previous sessions:
+${JSON.stringify(pastSessions, null, 2)}
+Ensure the context, sub-topics, arguments, and scenarios are completely new, fresh, and distinct from the above list. Never generate identical or highly similar dialogues or questions.
+`;
+      }
+    }
+
     const prompt = `You are an expert TEF Canada (Test d'Évaluation de Français) examiner and curriculum developer.
 Generate an authentic French conversation at ${level} level on the topic of "${topic}" matching the requested question category style, designed to resemble questions 20 to 40 of the TEF Canada listening comprehension exam.
+
+${adaptivePromptSnippet}
 
 CRITICAL INSTRUCTIONS:
 - Do NOT explain grammar in any part of the output (especially not in explanations).
@@ -286,6 +331,10 @@ For each question, provide:
                 topic: {
                   type: Type.STRING,
                   description: "The topic of the conversation (e.g., Housing, Work, Travel, etc.)"
+                },
+                subTopic: {
+                  type: Type.STRING,
+                  description: "A short, concise 1-sentence description of the conversation theme in French (e.g., 'Sophie et Marc débattent de la colocation intergénérationnelle')."
                 },
                 duration: {
                   type: Type.INTEGER,
@@ -380,7 +429,7 @@ For each question, provide:
                   description: "The full text transcript of the entire conversation as a single cohesive string, listing speakers and dialogue turns."
                 }
               },
-              required: ["topic", "duration", "dialogue", "questions", "transcript"]
+              required: ["topic", "duration", "dialogue", "questions", "transcript", "subTopic"]
             }
           }
         }),

@@ -1194,6 +1194,80 @@ export default function App() {
   // Calculate stats
   const accuracy = totalQuestions > 0 ? Math.round((correctQuestions / totalQuestions) * 100) : 0;
 
+  // Calculate TEF Listening Score estimation (0–699 scale)
+  const getTEFEstimation = () => {
+    if (totalQuestions === 0) {
+      return {
+        score: "—",
+        range: "—",
+        level: "N/A",
+        b1Active: false,
+        b2Active: false,
+        c1Active: false,
+        c2Active: false,
+      };
+    }
+
+    let scoreVal = 0;
+    let rangeVal = "—";
+    let levelVal = "B1";
+    let b1Active = false;
+    let b2Active = false;
+    let c1Active = false;
+    let c2Active = false;
+
+    // Map current global accuracy to standard TEF 0-699 score ranges:
+    // A1: 0–199, A2: 200–299, B1: 300–399, B2: 400–499, C1: 500–599, C2: 600–699
+    if (accuracy < 30) {
+      const ratio = accuracy / 30;
+      scoreVal = Math.round(ratio * 199);
+      rangeVal = "0–199";
+      levelVal = "A1";
+    } else if (accuracy < 50) {
+      const ratio = (accuracy - 30) / 20;
+      scoreVal = Math.round(200 + ratio * 99);
+      rangeVal = "200–299";
+      levelVal = "A2";
+    } else if (accuracy < 70) {
+      const ratio = (accuracy - 50) / 20;
+      scoreVal = Math.round(300 + ratio * 99);
+      rangeVal = "300–399";
+      levelVal = "B1";
+      b1Active = true;
+    } else if (accuracy < 85) {
+      const ratio = (accuracy - 70) / 15;
+      scoreVal = Math.round(400 + ratio * 99);
+      rangeVal = "400–499";
+      levelVal = "B2";
+      b2Active = true;
+    } else if (accuracy < 95) {
+      const ratio = (accuracy - 85) / 10;
+      scoreVal = Math.round(500 + ratio * 99);
+      rangeVal = "500–599";
+      levelVal = "C1";
+      c1Active = true;
+    } else {
+      const ratio = (accuracy - 95) / 5;
+      scoreVal = Math.round(600 + ratio * 99);
+      if (scoreVal > 699) scoreVal = 699;
+      rangeVal = "600–699";
+      levelVal = "C2";
+      c2Active = true;
+    }
+
+    return {
+      score: scoreVal,
+      range: rangeVal,
+      level: levelVal,
+      b1Active,
+      b2Active,
+      c1Active,
+      c2Active,
+    };
+  };
+
+  const tefEstimation = getTEFEstimation();
+
   // Identify weak topics (Accuracy < 65% and minimum 1 question answered)
   const weakTopics = TOPICS.filter((t) => {
     const stat = topicStats[t.id];
@@ -1582,7 +1656,7 @@ export default function App() {
               </div>
 
               {/* Phase 7 Statistics Block */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* Today Card */}
                 <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between relative overflow-hidden">
                   <div>
@@ -1634,6 +1708,62 @@ export default function App() {
                     <span className="text-[10px] bg-indigo-50 text-indigo-600 font-bold px-2 py-0.5 rounded">
                       {correctQuestions} / {totalQuestions} questions
                     </span>
+                  </div>
+                </div>
+
+                {/* Estimated TEF Score Card */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between relative overflow-hidden">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 block font-display">
+                      Estimated Listening Score
+                    </span>
+                    <div className="flex items-baseline gap-1 mt-2">
+                      <span className="text-4xl font-black text-indigo-600 font-display">
+                        {tefEstimation.score}
+                      </span>
+                      {totalQuestions > 0 && (
+                        <span className="text-xs text-slate-400 font-extrabold font-mono">/699</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 space-y-2.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">
+                        Range
+                      </span>
+                      <span className="text-xs font-mono font-extrabold text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                        {tefEstimation.range}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">
+                        Estimated Level
+                      </span>
+                      <div className="flex gap-1.5">
+                        {(["B1", "B2", "C1", "C2"] as const).map((lvl) => {
+                          const isActive = tefEstimation.level === lvl || (lvl === "B1" && tefEstimation.b1Active) || (lvl === "B2" && tefEstimation.b2Active) || (lvl === "C1" && tefEstimation.c1Active) || (lvl === "C2" && tefEstimation.c2Active);
+                          return (
+                            <span
+                              key={lvl}
+                              className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md border ${
+                                isActive
+                                  ? "bg-indigo-600 border-indigo-600 text-white shadow-xs"
+                                  : "bg-slate-50 border-slate-100 text-slate-400"
+                              }`}
+                            >
+                              {lvl}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 text-[9px] text-slate-400 leading-tight border-t border-slate-50 pt-2 flex items-start gap-1">
+                    <span className="text-indigo-500 font-bold">ℹ</span>
+                    <span>This estimation improves continuously as more training sessions are completed.</span>
                   </div>
                 </div>
               </div>

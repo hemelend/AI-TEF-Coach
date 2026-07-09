@@ -315,7 +315,7 @@ For each question, provide:
 - 'keyword': A key connective, transition or word in French from the dialogue that signals the correct meaning (e.g., 'pourtant', 'néanmoins', 'cependant', 'mais'). If none, return 'None'.
 - 'grammar': Return 'None' or a brief name of a grammar element used, but keep the focus on reasoning.
 - 'vocabulary': A key vocabulary word or expression from the dialogue that helps solve the question, or 'None'.
-- 'skillTested': The specific TEF comprehension skill tested. Choose EXACTLY one of: 'Implicit opinion', 'Concession', 'Recommendations', 'Negation', 'Double negatives'.`;
+- 'skillTested': The specific TEF comprehension skill tested. Choose EXACTLY one of: 'Implicit opinion', 'Explicit information', 'Speaker intention', 'Recommendation', 'Concession', 'Negation', 'Double negation', 'Inference', 'Purpose', 'Attitude', 'Opinion change'.`;
 
     const response = await callGeminiWithRetryAndFallback(
       (modelName) =>
@@ -418,7 +418,7 @@ For each question, provide:
                       },
                       skillTested: {
                         type: Type.STRING,
-                        description: "The specific TEF comprehension skill tested. Must be exactly one of: 'Implicit opinion', 'Concession', 'Recommendations', 'Negation', 'Double negatives'."
+                        description: "The specific TEF comprehension skill tested. Must be exactly one of: 'Implicit opinion', 'Explicit information', 'Speaker intention', 'Recommendation', 'Concession', 'Negation', 'Double negation', 'Inference', 'Purpose', 'Attitude', 'Opinion change'."
                       }
                     },
                     required: ["id", "questionText", "options", "correctAnswer", "explanation", "commonTrap", "why", "trap", "keyword", "grammar", "vocabulary", "skillTested"]

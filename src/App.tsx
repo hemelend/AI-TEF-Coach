@@ -78,6 +78,13 @@ interface AdaptiveHistoryEntry {
   dialogueTopicSummary?: string;
 }
 
+interface MasterySnapshot {
+  timestamp: string;
+  sessionName: string;
+  overallAccuracy: number;
+  tefScore: number;
+}
+
 interface TopicStat {
   correct: number;
   total: number;
@@ -180,6 +187,248 @@ const renderMarkdown = (text: string) => {
     );
   });
 };
+
+const normalizeSkill = (skill: string, index: number): string => {
+  const s = (skill || "").trim().toLowerCase();
+  
+  if (s.includes("double neg") || s.includes("double nég")) return "Double negation";
+  if (s.includes("opinion change") || s.includes("changement d'opinion") || s.includes("change of opinion")) return "Opinion change";
+  if (s.includes("implicit opinion") || s.includes("opinion implicite")) return "Implicit opinion";
+  if (s.includes("explicit") || s.includes("explicite")) return "Explicit information";
+  if (s.includes("speaker intention") || s.includes("intention du locuteur") || s.includes("intention de l'orateur") || s.includes("speaker's intention")) return "Speaker intention";
+  if (s.includes("recommend") || s.includes("conseil")) return "Recommendation";
+  if (s.includes("concession") || s.includes("restriction")) return "Concession";
+  if (s.includes("negation") || s.includes("négation")) return "Negation";
+  if (s.includes("inference") || s.includes("inférence") || s.includes("implicit comprehension")) return "Inference";
+  if (s.includes("purpose") || s.includes("but") || s.includes("objectif")) return "Purpose";
+  if (s.includes("attitude") || s.includes("sentiment") || s.includes("feeling")) return "Attitude";
+
+  const skillsList = [
+    "Implicit opinion",
+    "Explicit information",
+    "Speaker intention",
+    "Recommendation",
+    "Concession",
+    "Negation",
+    "Double negation",
+    "Inference",
+    "Purpose",
+    "Attitude",
+    "Opinion change"
+  ];
+  return skillsList[index % skillsList.length];
+};
+
+interface ImprovementChartProps {
+  data: MasterySnapshot[];
+}
+
+function ImprovementChart({ data }: ImprovementChartProps) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  if (data.length === 0) {
+    return (
+      <div className="h-44 flex items-center justify-center bg-slate-50/50 rounded-xl border border-slate-100">
+        <p className="text-xs text-slate-400">Aucune donnée historique à afficher.</p>
+      </div>
+    );
+  }
+
+  // Svg layout bounds
+  const width = 500;
+  const height = 180;
+  const paddingLeft = 40;
+  const paddingRight = 40;
+  const paddingTop = 25;
+  const paddingBottom = 25;
+
+  const chartWidth = width - paddingLeft - paddingRight;
+  const chartHeight = height - paddingTop - paddingBottom;
+
+  // Let's plot overallAccuracy (0 to 100)
+  // X coordinates
+  const points = data.map((d, i) => {
+    const x = paddingLeft + (data.length > 1 ? (i / (data.length - 1)) * chartWidth : chartWidth / 2);
+    // scale y from 0 to 100
+    const y = paddingTop + chartHeight - (d.overallAccuracy / 100) * chartHeight;
+    return { x, y, ...d };
+  });
+
+  // Build the line path d
+  let linePath = "";
+  let areaPath = "";
+  if (points.length > 0) {
+    linePath = `M ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(" ");
+    areaPath = `${linePath} L ${points[points.length - 1].x} ${paddingTop + chartHeight} L ${points[0].x} ${paddingTop + chartHeight} Z`;
+  }
+
+  // Hover state tooltip helper
+  const hoveredPoint = hoveredIndex !== null ? points[hoveredIndex] : null;
+
+  return (
+    <div className="space-y-4">
+      {/* Tooltip Header / Selected Point Detail */}
+      <div className="h-12 flex items-center justify-between px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl">
+        {hoveredPoint ? (
+          <div className="flex justify-between items-center w-full">
+            <div className="text-left">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block font-display leading-none">
+                {hoveredPoint.sessionName}
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono">
+                {new Date(hoveredPoint.timestamp).toLocaleDateString("fr-FR", {
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit"
+                })}
+              </span>
+            </div>
+            <div className="flex gap-4 items-center">
+              <div className="text-right">
+                <span className="text-[9px] font-bold text-slate-400 block leading-none">PRÉCISION</span>
+                <span className="text-sm font-black text-indigo-600 font-display">{hoveredPoint.overallAccuracy}%</span>
+              </div>
+              <div className="text-right border-l border-slate-200 pl-4">
+                <span className="text-[9px] font-bold text-slate-400 block leading-none">EST. TEF</span>
+                <span className="text-sm font-black text-indigo-600 font-display">{hoveredPoint.tefScore} <span className="text-[10px] font-bold text-slate-400">/699</span></span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-slate-400">
+            <span className="text-indigo-500 font-bold text-xs">📈</span>
+            <span className="text-xs text-slate-500 font-medium">Survolez les points pour voir le détail de votre progression.</span>
+          </div>
+        )}
+      </div>
+
+      {/* SVG Chart Container */}
+      <div className="relative bg-slate-50/30 rounded-xl border border-slate-100 p-2 overflow-visible">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible" id="improvement-svg-chart">
+          {/* Definitions for Gradients */}
+          <defs>
+            <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#4f46e5" stopOpacity="0.18" />
+              <stop offset="100%" stopColor="#4f46e5" stopOpacity="0.00" />
+            </linearGradient>
+          </defs>
+
+          {/* Grid lines (Y-axis: 40%, 60%, 80%, 100%) */}
+          {[40, 60, 80, 100].map((val) => {
+            const y = paddingTop + chartHeight - (val / 100) * chartHeight;
+            return (
+              <g key={val} className="opacity-40">
+                <line
+                  x1={paddingLeft}
+                  y1={y}
+                  x2={width - paddingRight}
+                  y2={y}
+                  stroke="#cbd5e1"
+                  strokeWidth="1"
+                  strokeDasharray="3 3"
+                />
+                <text
+                  x={paddingLeft - 8}
+                  y={y + 3}
+                  textAnchor="end"
+                  fill="#94a3b8"
+                  className="font-mono text-[9px] font-extrabold"
+                >
+                  {val}%
+                </text>
+              </g>
+            );
+          })}
+
+          {/* X Axis label placeholders */}
+          {points.length > 0 && (
+            <g className="opacity-60">
+              <line
+                x1={paddingLeft}
+                y1={paddingTop + chartHeight}
+                x2={width - paddingRight}
+                y2={paddingTop + chartHeight}
+                stroke="#cbd5e1"
+                strokeWidth="1.5"
+              />
+              {points.map((p, idx) => {
+                // Show label only for first, middle, and last points to avoid crowding
+                const showLabel = idx === 0 || idx === points.length - 1 || (points.length > 4 && idx === Math.floor(points.length / 2));
+                if (!showLabel) return null;
+                return (
+                  <text
+                    key={idx}
+                    x={p.x}
+                    y={paddingTop + chartHeight + 14}
+                    textAnchor="middle"
+                    fill="#64748b"
+                    className="font-display font-black text-[8px] uppercase tracking-wider"
+                  >
+                    S{idx + 1}
+                  </text>
+                );
+              })}
+            </g>
+          )}
+
+          {/* Area Path */}
+          {areaPath && (
+            <path
+              d={areaPath}
+              fill="url(#chartGradient)"
+            />
+          )}
+
+          {/* Line Path */}
+          {linePath && (
+            <motion.path
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ duration: 1, ease: "easeOut" }}
+              d={linePath}
+              fill="none"
+              stroke="#4f46e5"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+
+          {/* Point Dots with Hover Area */}
+          {points.map((p, idx) => {
+            const isHovered = hoveredIndex === idx;
+            return (
+              <g key={idx}>
+                {/* Visual Circle */}
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={isHovered ? 6 : 4}
+                  fill={isHovered ? "#ffffff" : "#4f46e5"}
+                  stroke="#4f46e5"
+                  strokeWidth={isHovered ? 3.5 : 2}
+                  className="transition-all duration-150"
+                />
+                
+                {/* Large Transparent Pointer Event Target */}
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={14}
+                  fill="transparent"
+                  className="cursor-pointer"
+                  onMouseEnter={() => setHoveredIndex(idx)}
+                  onMouseLeave={() => setHoveredIndex(null)}
+                />
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   // State for session progress & database
@@ -316,12 +565,20 @@ export default function App() {
 
   // Sub-skill statistics matching Phase 7
   const [skillStats, setSkillStats] = useState<{ [key: string]: { correct: number; total: number } }>({
-    "Implicit opinion": { correct: 13, total: 21 }, // 62%
-    "Concession": { correct: 11, total: 19 },      // 58%
-    "Recommendations": { correct: 20, total: 22 }, // 91%
-    "Negation": { correct: 24, total: 25 },       // 96%
-    "Double negatives": { correct: 6, total: 14 },   // 43%
+    "Implicit opinion": { correct: 3, total: 4 },
+    "Explicit information": { correct: 4, total: 4 },
+    "Speaker intention": { correct: 3, total: 4 },
+    "Recommendation": { correct: 3, total: 3 },
+    "Concession": { correct: 2, total: 3 },
+    "Negation": { correct: 4, total: 4 },
+    "Double negation": { correct: 1, total: 3 },
+    "Inference": { correct: 2, total: 3 },
+    "Purpose": { correct: 3, total: 3 },
+    "Attitude": { correct: 3, total: 3 },
+    "Opinion change": { correct: 2, total: 3 },
   });
+
+  const [historicalMastery, setHistoricalMastery] = useState<MasterySnapshot[]>([]);
 
   const [adaptiveHistory, setAdaptiveHistory] = useState<AdaptiveHistoryEntry[]>([]);
 
@@ -385,11 +642,17 @@ export default function App() {
       }
     } else {
       localStorage.setItem("tef_skill_stats", JSON.stringify({
-        "Implicit opinion": { correct: 13, total: 21 },
-        "Concession": { correct: 11, total: 19 },
-        "Recommendations": { correct: 20, total: 22 },
-        "Negation": { correct: 24, total: 25 },
-        "Double negatives": { correct: 6, total: 14 },
+        "Implicit opinion": { correct: 3, total: 4 },
+        "Explicit information": { correct: 4, total: 4 },
+        "Speaker intention": { correct: 3, total: 4 },
+        "Recommendation": { correct: 3, total: 3 },
+        "Concession": { correct: 2, total: 3 },
+        "Negation": { correct: 4, total: 4 },
+        "Double negation": { correct: 1, total: 3 },
+        "Inference": { correct: 2, total: 3 },
+        "Purpose": { correct: 3, total: 3 },
+        "Attitude": { correct: 3, total: 3 },
+        "Opinion change": { correct: 2, total: 3 },
       }));
     }
 
@@ -510,6 +773,62 @@ export default function App() {
       setAdaptiveHistory(initialHistory);
       localStorage.setItem("tef_adaptive_history", JSON.stringify(initialHistory));
     }
+
+    const storedHistoricalMastery = localStorage.getItem("tef_historical_mastery");
+    if (storedHistoricalMastery) {
+      try {
+        setHistoricalMastery(JSON.parse(storedHistoricalMastery));
+      } catch (e) {
+        console.error("Error parsing stored historical mastery:", e);
+      }
+    } else {
+      const initialMastery: MasterySnapshot[] = [
+        {
+          timestamp: new Date(Date.now() - 6 * 24 * 3600 * 1000).toISOString(),
+          sessionName: "Session 1: Logement",
+          overallAccuracy: 60,
+          tefScore: 320,
+        },
+        {
+          timestamp: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
+          sessionName: "Session 2: Travail",
+          overallAccuracy: 64,
+          tefScore: 370,
+        },
+        {
+          timestamp: new Date(Date.now() - 4 * 24 * 3600 * 1000).toISOString(),
+          sessionName: "Session 3: Voyage",
+          overallAccuracy: 71,
+          tefScore: 410,
+        },
+        {
+          timestamp: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+          sessionName: "Session 4: Environnement",
+          overallAccuracy: 75,
+          tefScore: 430,
+        },
+        {
+          timestamp: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
+          sessionName: "Session 5: Achats",
+          overallAccuracy: 78,
+          tefScore: 460,
+        },
+        {
+          timestamp: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString(),
+          sessionName: "Session 6: Santé",
+          overallAccuracy: 81,
+          tefScore: 510,
+        },
+        {
+          timestamp: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+          sessionName: "Session 7: Technologie",
+          overallAccuracy: 83,
+          tefScore: 520,
+        },
+      ];
+      setHistoricalMastery(initialMastery);
+      localStorage.setItem("tef_historical_mastery", JSON.stringify(initialMastery));
+    }
   }, []);
 
   // Cleanup speech synthesis on unmount
@@ -608,17 +927,25 @@ export default function App() {
       localStorage.removeItem("tef_today_stats");
       localStorage.removeItem("tef_week_stats");
       localStorage.removeItem("tef_adaptive_history");
+      localStorage.removeItem("tef_historical_mastery");
       setTotalQuestions(0);
       setCorrectQuestions(0);
       setTotalSessions(0);
       setTopicStats({});
       setSkillStats({
         "Implicit opinion": { correct: 0, total: 0 },
+        "Explicit information": { correct: 0, total: 0 },
+        "Speaker intention": { correct: 0, total: 0 },
+        "Recommendation": { correct: 0, total: 0 },
         "Concession": { correct: 0, total: 0 },
-        "Recommendations": { correct: 0, total: 0 },
         "Negation": { correct: 0, total: 0 },
-        "Double negatives": { correct: 0, total: 0 },
+        "Double negation": { correct: 0, total: 0 },
+        "Inference": { correct: 0, total: 0 },
+        "Purpose": { correct: 0, total: 0 },
+        "Attitude": { correct: 0, total: 0 },
+        "Opinion change": { correct: 0, total: 0 },
       });
+      setHistoricalMastery([]);
       setAdaptiveHistory([]);
       setTodayStats({ correct: 0, total: 0 });
       setWeekStats({ correct: 0, total: 0 });
@@ -816,16 +1143,29 @@ export default function App() {
       const uniqueIncorrects = Array.from(new Set(incorrectSkills));
       coreAnalysis = "#### 🔍 Analyse de tes points de vigilance sur cette session :\n\n";
       uniqueIncorrects.forEach((skill) => {
-        if (skill.toLowerCase().includes("opinion") || skill.toLowerCase().includes("attitude")) {
-          coreAnalysis += "- **Opinions implicites** : Sophie ou Marc expriment parfois leur opinion par de l'ironie, des soupirs, ou une intonation subtile plutôt que des termes directs. Prête attention au ton de la voix.\n";
-        } else if (skill.toLowerCase().includes("concession") || skill.toLowerCase().includes("restriction")) {
-          coreAnalysis += "- **Concession & Opposition** : Des connecteurs comme 'pourtant', 'néanmoins' ou 'bien que' nuancent l'affirmation de départ. Attends toujours la fin de la réplique avant de statuer.\n";
-        } else if (skill.toLowerCase().includes("recommend") || skill.toLowerCase().includes("conseil")) {
-          coreAnalysis += "- **Recommandations & Suggestions** : Les locuteurs utilisent souvent le subjonctif ou le conditionnel présent ('il vaudrait mieux que') pour conseiller sans l'imposer explicitement.\n";
-        } else if (skill.toLowerCase().includes("double negative") || skill.toLowerCase().includes("double négation")) {
-          coreAnalysis += "- **Double négation** : Dans la langue parlée, accumuler deux négations (ex: 'Ce n'est pas impossible') équivaut à affirmer quelque chose. C'est le principal piège à éviter au TEF.\n";
-        } else {
-          coreAnalysis += "- **Négations & Restrictions** : Des structures comme 'ne... guère' ou 'ne... que' restreignent le sens de la phrase et inversent instantanément la vérité de l'affirmation principale.\n";
+        const normalized = normalizeSkill(skill, 0);
+        if (normalized === "Implicit opinion") {
+          coreAnalysis += "- **Implicit opinion** : Sophie ou Marc expriment parfois leur opinion par de l'ironie, des soupirs, ou une intonation subtile plutôt que des termes directs. Prête attention au ton de la voix.\n";
+        } else if (normalized === "Explicit information") {
+          coreAnalysis += "- **Explicit information** : Reste concentré sur les faits purs, chiffres, dates ou détails directs énoncés, sans chercher à interpréter.\n";
+        } else if (normalized === "Speaker intention") {
+          coreAnalysis += "- **Speaker intention** : Essaie d'identifier l'objectif sous-jacent de la prise de parole du locuteur (convaincre, contredire, rassurer, informer).\n";
+        } else if (normalized === "Recommendation") {
+          coreAnalysis += "- **Recommendation** : Repère les conseils indirects formulés avec du subjonctif ou du conditionnel ('il conviendrait de', 'il faudrait').\n";
+        } else if (normalized === "Concession") {
+          coreAnalysis += "- **Concession** : Prête attention aux structures comme 'certes', 'soit' ou 'bien que' qui nuancent un premier argument d'opposition.\n";
+        } else if (normalized === "Negation") {
+          coreAnalysis += "- **Negation** : Repère les négations de restriction ('ne... que') ou inversions de sens ('ne... guère') qui piègent souvent les candidats.\n";
+        } else if (normalized === "Double negation") {
+          coreAnalysis += "- **Double negation** : L'accumulation de deux négations parlées (ex: 'Ce n'est pas faux') équivaut à une affirmation claire.\n";
+        } else if (normalized === "Inference") {
+          coreAnalysis += "- **Inference** : Déduis les faits non formulés en reliant logiquement plusieurs indices et éléments entendus au cours de la discussion.\n";
+        } else if (normalized === "Purpose") {
+          coreAnalysis += "- **Purpose** : Repère le sujet initial ou l'objectif sous-jacent de la discussion entre Sophie et Marc.\n";
+        } else if (normalized === "Attitude") {
+          coreAnalysis += "- **Attitude** : Détecte l'état d'esprit et l'émotion du locuteur (scepticisme, enthousiasme, déception) grâce au rythme et aux interjections.\n";
+        } else if (normalized === "Opinion change") {
+          coreAnalysis += "- **Opinion change** : Sois attentif au locuteur qui débute sur une opinion positive et bifurque ensuite suite à une concession.\n";
         }
       });
     } else {
@@ -1085,24 +1425,7 @@ export default function App() {
       // Update sub-skill statistics
       const updatedSkillStats = { ...skillStats };
       exercise.questions.forEach((q, idx) => {
-        let skillKey = q.skillTested || "Implicit opinion";
-        
-        // Normalize skill tested key to match one of our 5 skills perfectly
-        if (skillKey.toLowerCase().includes("opinion") || skillKey.toLowerCase().includes("attitude")) {
-          skillKey = "Implicit opinion";
-        } else if (skillKey.toLowerCase().includes("concession") || skillKey.toLowerCase().includes("restriction")) {
-          skillKey = "Concession";
-        } else if (skillKey.toLowerCase().includes("recommend") || skillKey.toLowerCase().includes("conseil")) {
-          skillKey = "Recommendations";
-        } else if (skillKey.toLowerCase().includes("negation") || skillKey.toLowerCase().includes("négation")) {
-          skillKey = "Negation";
-        } else if (skillKey.toLowerCase().includes("double negative") || skillKey.toLowerCase().includes("double négation")) {
-          skillKey = "Double negatives";
-        } else {
-          const fallbacks = ["Implicit opinion", "Concession", "Recommendations", "Negation", "Double negatives"];
-          skillKey = fallbacks[idx % 5];
-        }
-
+        const skillKey = normalizeSkill(q.skillTested || "Implicit opinion", idx);
         const currentSkillStat = updatedSkillStats[skillKey] || { correct: 0, total: 0 };
         const chosen = selectedAnswers[q.id];
         const isCorrect = chosen === q.correctAnswer;
@@ -1136,22 +1459,7 @@ export default function App() {
       // Save Adaptive History Entry
       const currentSessionWeakSkills: string[] = [];
       exercise.questions.forEach((q, idx) => {
-        let skillKey = q.skillTested || "Implicit opinion";
-        if (skillKey.toLowerCase().includes("opinion") || skillKey.toLowerCase().includes("attitude")) {
-          skillKey = "Implicit opinion";
-        } else if (skillKey.toLowerCase().includes("concession") || skillKey.toLowerCase().includes("restriction")) {
-          skillKey = "Concession";
-        } else if (skillKey.toLowerCase().includes("recommend") || skillKey.toLowerCase().includes("conseil")) {
-          skillKey = "Recommendations";
-        } else if (skillKey.toLowerCase().includes("negation") || skillKey.toLowerCase().includes("négation")) {
-          skillKey = "Negation";
-        } else if (skillKey.toLowerCase().includes("double negative") || skillKey.toLowerCase().includes("double négation")) {
-          skillKey = "Double negatives";
-        } else {
-          const fallbacks = ["Implicit opinion", "Concession", "Recommendations", "Negation", "Double negatives"];
-          skillKey = fallbacks[idx % 5];
-        }
-
+        const skillKey = normalizeSkill(q.skillTested || "Implicit opinion", idx);
         const chosen = selectedAnswers[q.id];
         const isCorrect = chosen === q.correctAnswer;
         if (!isCorrect && !currentSessionWeakSkills.includes(skillKey)) {
@@ -1175,6 +1483,39 @@ export default function App() {
       const updatedHistory = [...adaptiveHistory, newHistoryEntry];
       setAdaptiveHistory(updatedHistory);
       localStorage.setItem("tef_adaptive_history", JSON.stringify(updatedHistory));
+
+      // Add MasterySnapshot for improvement over time tracking
+      const newTotalQuestions = updatedTotal;
+      const newCorrectQuestions = updatedCorrect;
+      const newAccuracy = newTotalQuestions > 0 ? Math.round((newCorrectQuestions / newTotalQuestions) * 100) : 0;
+      
+      // Calculate estimated TEF score based on newAccuracy
+      let scoreVal = 0;
+      if (newAccuracy < 30) {
+        scoreVal = Math.round((newAccuracy / 30) * 199);
+      } else if (newAccuracy < 50) {
+        scoreVal = Math.round(200 + ((newAccuracy - 30) / 20) * 99);
+      } else if (newAccuracy < 70) {
+        scoreVal = Math.round(300 + ((newAccuracy - 50) / 20) * 99);
+      } else if (newAccuracy < 85) {
+        scoreVal = Math.round(400 + ((newAccuracy - 70) / 15) * 99);
+      } else if (newAccuracy < 95) {
+        scoreVal = Math.round(500 + ((newAccuracy - 85) / 10) * 99);
+      } else {
+        scoreVal = Math.round(600 + ((newAccuracy - 95) / 5) * 99);
+        if (scoreVal > 699) scoreVal = 699;
+      }
+
+      const newSnapshot: MasterySnapshot = {
+        timestamp: new Date().toISOString(),
+        sessionName: `Session ${totalSessions}: ${TOPICS.find(t => t.id === topicKey)?.label || topicKey}`,
+        overallAccuracy: newAccuracy,
+        tefScore: scoreVal,
+      };
+
+      const updatedMastery = [...historicalMastery, newSnapshot];
+      setHistoricalMastery(updatedMastery);
+      localStorage.setItem("tef_historical_mastery", JSON.stringify(updatedMastery));
     }
 
     setQuizFinished(true);
@@ -1768,6 +2109,19 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Improvement Curve Panel (Display improvement over time) */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4 text-left">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-slate-400 tracking-wider font-display flex items-center gap-2">
+                    📈 Courbe de Progression (Évolution du Score)
+                  </h3>
+                  <p className="text-slate-500 text-xs mt-0.5">
+                    Historique de maîtrise et amélioration de votre précision d'écoute globale au fil des sessions.
+                  </p>
+                </div>
+                <ImprovementChart data={historicalMastery} />
+              </div>
+
               {/* Sub-skills competency list & recommendations */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-left">
                 {/* Skills competency breakdown */}
@@ -1792,9 +2146,15 @@ export default function App() {
                             <span className="font-bold text-slate-800 flex items-center gap-2">
                               <span>
                                 {skillName === "Implicit opinion" ? "🗣️" :
+                                 skillName === "Explicit information" ? "📄" :
+                                 skillName === "Speaker intention" ? "🎯" :
+                                 skillName === "Recommendation" ? "💡" :
                                  skillName === "Concession" ? "⚖️" :
-                                 skillName === "Recommendations" ? "💡" :
-                                 skillName === "Negation" ? "🚫" : "🔄"}
+                                 skillName === "Negation" ? "🚫" :
+                                 skillName === "Double negation" ? "🔄" :
+                                 skillName === "Inference" ? "🕵️" :
+                                 skillName === "Purpose" ? "🥅" :
+                                 skillName === "Attitude" ? "🎭" : "🔄"}
                               </span>
                               <span>{skillName}</span>
                             </span>
@@ -1860,11 +2220,17 @@ export default function App() {
                                 Axe prioritaire : {name}
                               </span>
                               <p className="text-xs text-slate-600 leading-relaxed">
-                                {name === "Double negatives" && "La double négation est votre principal piège auditif. En français oral, accumuler deux négations (ex: 'Ce n'est pas impossible') équivaut à une affirmation. Notez la tournure mentale pour ne pas sur-interpréter l'objection."}
-                                {name === "Concession" && "Vous bloquez sur la concession. Prêtez attention aux connecteurs d'opposition comme 'pourtant', 'néanmoins' ou 'bien que'. Ils indiquent qu'un argument de départ va être atténué ou nuancé."}
-                                {name === "Implicit opinion" && "La détection des opinions implicites peut être améliorée. Ne cherchez pas des mots simples comme 'j'aime' ou 'je déteste'. Écoutez l'intonation (soupirs, rires) et les figures de style ironiques du locuteur."}
+                                {name === "Double negation" && "La double négation est votre principal piège auditif. En français oral, accumuler deux négations (ex: 'Ce n'est pas impossible') équivaut à une affirmation. Notez la tournure mentale pour ne pas sur-interpréter l'objection."}
+                                {name === "Concession" && "Prêtez attention aux connecteurs d'opposition et de restriction comme 'pourtant', 'néanmoins', 'bien que' ou 'quand bien même'. Ils indiquent qu'un argument de départ va être atténué ou nuancé."}
+                                {name === "Implicit opinion" && "Ne cherchez pas des mots simples comme 'j'aime' ou 'je déteste'. Écoutez l'intonation (soupirs, rires, sarcasme) et les figures de style ironiques du locuteur."}
                                 {name === "Negation" && "Faites attention aux négations complexes ('ne... guère', 'ne... que', 'sans nul doute'). Le TEF les utilise souvent pour renverser complètement le sens d'un argument à la dernière seconde."}
-                                {name === "Recommendations" && "Les tournures de conseils et recommandations utilisent souvent le subjonctif ou le conditionnel présent ('il conviendrait de', 'il faudrait que'). Préparez vos oreilles à ces formes verbales."}
+                                {name === "Recommendation" && "Les tournures de conseils et recommandations utilisent souvent le subjonctif ou le conditionnel présent ('il conviendrait de', 'il faudrait que'). Préparez vos oreilles à ces structures."}
+                                {name === "Explicit information" && "Pour les informations explicites, restez concentré sur les faits purs, chiffres, dates ou détails directs énoncés, sans chercher à sur-interpréter ou déduire des conclusions."}
+                                {name === "Speaker intention" && "L'intention du locuteur requiert d'identifier pourquoi il parle (convaincre, s'excuser, contredire, informer). Prêtez attention aux actes de parole du dialogue."}
+                                {name === "Inference" && "L'inférence demande de lire entre les lignes. Connectez différents indices et faits entendus pour déduire la conclusion logique non formulée explicitement."}
+                                {name === "Purpose" && "Pour le but ou l'objectif, identifiez le problème initial posé par Sophie ou Marc. Le but principal est souvent résumé dans les premières secondes de l'enregistrement."}
+                                {name === "Attitude" && "L'attitude révèle l'état émotionnel (déception, enthousiasme, hésitation, scepticisme). Soyez attentif à l'intensité de la voix et aux interjections."}
+                                {name === "Opinion change" && "Le changement d'opinion est un piège classique du TEF. Un locuteur commence souvent par approuver puis, face à un contre-argument, finit par changer d'avis."}
                               </p>
                             </div>
                           );

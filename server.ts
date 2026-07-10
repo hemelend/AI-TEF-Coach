@@ -303,7 +303,11 @@ The dialogue MUST follow these rules:
 3. ${levelDescription}
 4. Sophie and Marc must have a structured exchange where they discuss, plan, or debate something related to the topic of ${topic}.
 5. ${typeDescription}
-6. Provide the dialogue in a "dialogue" JSON array of lines, where each line has "speaker", "voice" ("female" for Sophie, "male" for Marc), and "text" fields.
+6. Provide the dialogue in a "dialogue" JSON array of lines, where each line has:
+   - "speaker": "Sophie" or "Marc"
+   - "voice": "female" or "male"
+   - "text": the spoken text in French
+   - "emotion": the specific spoken emotion of this turn (MUST be one of: "surpris", "irrité", "inquiet", "déçu", "enthousiaste", "curieux", "sceptique", "convaincu", "hésitant", "neutre"). Ensure the chosen emotion accurately matches the text and the argument (e.g. if interrupting or disagreeing, choose "irrité" or "sceptique"; if changing opinion or hesitating, choose "hésitant" or "surpris", etc.)
 7. Explicitly set the "duration" field to ${durationVal} in the root of the JSON.
 8. Provide a short, concise 1-sentence description of the conversation theme in French in "subTopic" field.
 9. Provide "transcript": The full text transcript of the entire conversation as a single cohesive string, listing speakers and dialogue turns.
@@ -315,7 +319,7 @@ The dialogue MUST follow these rules:
           model: modelName,
           contents: prompt,
           config: {
-            systemInstruction: "You are a professional TEF Canada test creation system. Generate the conversation/dialogue strictly in JSON according to the requested schema.",
+            systemInstruction: "You are a professional TEF Canada test creation system. Generate the conversation/dialogue strictly in JSON according to the requested schema. Ensure that dialogue lines have highly emotional, expressive punctuation (ellipses, exclamation marks, question marks) so the text-to-speech engine can synthesize strong emotional inflections.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -349,9 +353,13 @@ The dialogue MUST follow these rules:
                       text: {
                         type: Type.STRING,
                         description: `The spoken text in French, ${level} level.`
+                      },
+                      emotion: {
+                        type: Type.STRING,
+                        description: "The emotion of this turn (must be one of: 'surpris', 'irrité', 'inquiet', 'déçu', 'enthousiaste', 'curieux', 'sceptique', 'convaincu', 'hésitant', 'neutre')."
                       }
                     },
-                    required: ["speaker", "voice", "text"]
+                    required: ["speaker", "voice", "text", "emotion"]
                   }
                 },
                 transcript: {
@@ -638,9 +646,39 @@ app.post("/api/tts", async (req, res) => {
       const isSophie =
         (line.speaker || "").trim().toLowerCase() === "sophie" ||
         (line.voice || "").trim().toLowerCase() === "female";
+
+      // Map emotion keys to French stage directions to cue Gemini TTS
+      let emotionCue = "";
+      if (line.emotion) {
+        const emotionLower = line.emotion.trim().toLowerCase();
+        if (emotionLower === "surpris" || emotionLower === "surprise") {
+          emotionCue = "(d'un ton très surpris et étonné)";
+        } else if (emotionLower === "irrité" || emotionLower === "irritation" || emotionLower === "fâché") {
+          emotionCue = "(avec irritation, colère et mécontentement)";
+        } else if (emotionLower === "inquiet" || emotionLower === "inquiétude") {
+          emotionCue = "(d'un ton inquiet, soucieux et anxieux)";
+        } else if (emotionLower === "déçu" || emotionLower === "déception") {
+          emotionCue = "(d'un ton déçu, triste et mélancolique)";
+        } else if (emotionLower === "enthousiaste" || emotionLower === "excitation") {
+          emotionCue = "(avec beaucoup d'enthousiasme, de joie et d'énergie)";
+        } else if (emotionLower === "curieux" || emotionLower === "curiosité") {
+          emotionCue = "(d'un ton très curieux, intrigué et intéressé)";
+        } else if (emotionLower === "sceptique" || emotionLower === "doute") {
+          emotionCue = "(d'un ton sceptique, suspicieux et dubitatif)";
+        } else if (emotionLower === "convaincu" || emotionLower === "assuré") {
+          emotionCue = "(d'un ton ferme, convaincu, sérieux et assuré)";
+        } else if (emotionLower === "hésitant" || emotionLower === "hésitation") {
+          emotionCue = "(d'un air hésitant, lent, pensif et indécis)";
+        } else if (emotionLower === "neutre") {
+          emotionCue = "(de manière calme, posée et neutre)";
+        } else {
+          emotionCue = `(avec un ton ${line.emotion})`;
+        }
+      }
+
       return {
         speaker: isSophie ? "Speaker_Sophie" : "Speaker_Marc",
-        text: line.text,
+        text: emotionCue ? `${emotionCue} ${line.text}` : line.text,
       };
     });
 

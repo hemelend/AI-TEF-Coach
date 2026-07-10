@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "AI TEF Coach",
+  "description": "Entraînement intelligent et interactif pour l'examen du TEF Canada, avec dialogue expressif généré par IA, synthèse vocale adaptative et coach de performance.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

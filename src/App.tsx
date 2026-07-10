@@ -57,6 +57,7 @@ interface DialogueLine {
   speaker: "Sophie" | "Marc";
   voice: "female" | "male";
   text: string;
+  emotion?: string;
 }
 
 interface QuestionOption {
@@ -545,6 +546,29 @@ const getDailyMission = () => {
     estimatedCompletionMin,
     difficulty
   };
+};
+
+const EMOTION_LABELS: { [key: string]: { label: string; bg: string; text: string; emoji: string } } = {
+  surpris: { label: "Surpris", bg: "bg-amber-100 border-amber-200", text: "text-amber-800", emoji: "😲" },
+  surprise: { label: "Surprise", bg: "bg-amber-100 border-amber-200", text: "text-amber-800", emoji: "😲" },
+  irrité: { label: "Irrité", bg: "bg-red-50 border-red-200", text: "text-red-700", emoji: "😠" },
+  irritation: { label: "Irritation", bg: "bg-red-50 border-red-200", text: "text-red-700", emoji: "😠" },
+  fâché: { label: "Fâché", bg: "bg-red-50 border-red-200", text: "text-red-700", emoji: "😠" },
+  inquiet: { label: "Inquiet", bg: "bg-purple-100 border-purple-200", text: "text-purple-800", emoji: "😰" },
+  inquiétude: { label: "Inquiétude", bg: "bg-purple-100 border-purple-200", text: "text-purple-800", emoji: "😰" },
+  déçu: { label: "Déçu", bg: "bg-slate-100 border-slate-300", text: "text-slate-700", emoji: "😞" },
+  déception: { label: "Déception", bg: "bg-slate-100 border-slate-300", text: "text-slate-700", emoji: "😞" },
+  enthousiaste: { label: "Enthousiaste", bg: "bg-emerald-100 border-emerald-200", text: "text-emerald-800", emoji: "🤩" },
+  excitation: { label: "Excitation", bg: "bg-emerald-100 border-emerald-200", text: "text-emerald-800", emoji: "🤩" },
+  curieux: { label: "Curieux", bg: "bg-teal-100 border-teal-200", text: "text-teal-800", emoji: "🧐" },
+  curiosité: { label: "Curiosité", bg: "bg-teal-100 border-teal-200", text: "text-teal-800", emoji: "🧐" },
+  sceptique: { label: "Sceptique", bg: "bg-amber-100 border-amber-200", text: "text-amber-800", emoji: "🤨" },
+  doute: { label: "Doute", bg: "bg-amber-100 border-amber-200", text: "text-amber-800", emoji: "🤨" },
+  convaincu: { label: "Convaincu", bg: "bg-indigo-100 border-indigo-200", text: "text-indigo-800", emoji: "🗣️" },
+  assuré: { label: "Assuré", bg: "bg-indigo-100 border-indigo-200", text: "text-indigo-800", emoji: "🗣️" },
+  hésitant: { label: "Hésitant", bg: "bg-zinc-100 border-zinc-200", text: "text-zinc-800", emoji: "🤔" },
+  hésitation: { label: "Hésitation", bg: "bg-zinc-100 border-zinc-200", text: "text-zinc-800", emoji: "🤔" },
+  neutre: { label: "Neutre", bg: "bg-slate-100 border-slate-200", text: "text-slate-600", emoji: "😐" },
 };
 
 export default function App() {
@@ -2190,8 +2214,18 @@ export default function App() {
                       : "bg-indigo-50/40 border border-indigo-100/70 text-slate-800 rounded-tr-xs"
                   }`}
                 >
-                  <div className={`text-[10px] font-black uppercase tracking-wider mb-1 ${isSophie ? "text-rose-700" : "text-indigo-700"}`}>
-                    {line.speaker}
+                  <div className={`text-[10px] font-black uppercase tracking-wider mb-1 flex items-center gap-1.5 ${isSophie ? "text-rose-700" : "text-indigo-700"}`}>
+                    <span>{line.speaker}</span>
+                    {line.emotion && EMOTION_LABELS[line.emotion.toLowerCase()] && (
+                      <span
+                        className={`text-[8px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded-md border ${
+                          EMOTION_LABELS[line.emotion.toLowerCase()].bg
+                        } ${EMOTION_LABELS[line.emotion.toLowerCase()].text} flex items-center gap-1 shadow-2xs`}
+                      >
+                        <span>{EMOTION_LABELS[line.emotion.toLowerCase()].emoji}</span>
+                        <span>{EMOTION_LABELS[line.emotion.toLowerCase()].label}</span>
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs md:text-sm leading-relaxed text-slate-700">
                     {line.text}
@@ -4698,13 +4732,25 @@ export default function App() {
                                 key={idx}
                                 className={`flex flex-col ${isSophie ? "items-end" : "items-start"}`}
                               >
-                                <span
-                                  className={`text-[10px] font-bold tracking-wider uppercase mb-0.5 ${
-                                    isSophie ? "text-pink-600" : "text-blue-600"
-                                  }`}
-                                >
-                                  {isSophie ? "Sophie 👩‍💼" : "Marc 👨‍💼"}
-                                </span>
+                                <div className={`flex items-center gap-2 mb-1 ${isSophie ? "flex-row-reverse" : "flex-row"}`}>
+                                  <span
+                                    className={`text-[10px] font-bold tracking-wider uppercase ${
+                                      isSophie ? "text-pink-600" : "text-blue-600"
+                                    }`}
+                                  >
+                                    {isSophie ? "Sophie 👩‍💼" : "Marc 👨‍💼"}
+                                  </span>
+                                  {line.emotion && EMOTION_LABELS[line.emotion.toLowerCase()] && (
+                                    <span
+                                      className={`text-[9px] font-bold tracking-wide uppercase px-2 py-0.5 rounded-md border ${
+                                        EMOTION_LABELS[line.emotion.toLowerCase()].bg
+                                      } ${EMOTION_LABELS[line.emotion.toLowerCase()].text} flex items-center gap-1 shadow-2xs`}
+                                    >
+                                      <span>{EMOTION_LABELS[line.emotion.toLowerCase()].emoji}</span>
+                                      <span>{EMOTION_LABELS[line.emotion.toLowerCase()].label}</span>
+                                    </span>
+                                  )}
+                                </div>
                                 <div
                                   className={`p-3.5 max-w-[85%] rounded-2xl text-xs leading-relaxed shadow-xs ${
                                     isSophie

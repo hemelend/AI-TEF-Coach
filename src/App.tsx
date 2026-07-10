@@ -27,6 +27,14 @@ import {
   Lock,
   ChevronLeft,
   Clock,
+  Calendar,
+  Target,
+  Compass,
+  Hourglass,
+  Home,
+  Cpu,
+  History,
+  Brain,
 } from "lucide-react";
 
 // Types
@@ -76,6 +84,10 @@ interface AdaptiveHistoryEntry {
   elapsedTime: number;
   weakSkills: string[];
   dialogueTopicSummary?: string;
+  exercise?: TEFExercise;
+  selectedAnswers?: { [key: string]: "A" | "B" | "C" | "D" };
+  estimatedTefScore?: number;
+  coachFeedback?: string | null;
 }
 
 interface MasterySnapshot {
@@ -430,7 +442,101 @@ function ImprovementChart({ data }: ImprovementChartProps) {
   );
 }
 
+// Helper to format skill names beautifully
+const formatSkillDisplay = (skill: string) => {
+  const mappings: Record<string, string> = {
+    "Implicit opinion": "Implicit Opinions",
+    "Explicit information": "Explicit Information",
+    "Speaker intention": "Speaker Intentions",
+    "Recommendation": "Recommendations",
+    "Concession": "Concessions",
+    "Negation": "Negations",
+    "Double negation": "Double Negations",
+    "Inference": "Inferences",
+    "Purpose": "Purpose Detection",
+    "Attitude": "Attitude & Emotion",
+    "Opinion change": "Opinion Shifts",
+  };
+  return mappings[skill] || skill;
+};
+
+// Deterministic daily mission generator based on current date
+const getDailyMission = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const dateStr = `${year}-${month}-${day}`;
+
+  // Simple LCG seeded by the date hash to generate consistent daily parameters
+  let hash = 0;
+  for (let i = 0; i < dateStr.length; i++) {
+    hash = dateStr.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  const seed = Math.abs(hash);
+  const lcg = (s: number) => {
+    let current = s;
+    return () => {
+      current = (current * 1664525 + 1013904223) % 4294967296;
+      return current / 4294967296;
+    };
+  };
+
+  const nextRand = lcg(seed);
+
+  // 1. Topic
+  const topicsList = ["work", "travel", "housing", "environment", "shopping", "education", "health", "technology"];
+  const topicId = topicsList[Math.floor(nextRand() * topicsList.length)];
+  const topicLabel = topicId.charAt(0).toUpperCase() + topicId.slice(1);
+
+  // 2. Question type: "20-30" or "35-40"
+  const qType = nextRand() < 0.5 ? "20-30" : "35-40";
+
+  // 3. Duration: 60, 90, or 120 seconds
+  const durations = [60, 90, 120];
+  const durationSec = durations[Math.floor(nextRand() * durations.length)];
+
+  // 4. Target Skill
+  const skillsList = [
+    "Implicit opinion",
+    "Explicit information",
+    "Speaker intention",
+    "Recommendation",
+    "Concession",
+    "Negation",
+    "Double negation",
+    "Inference",
+    "Purpose",
+    "Attitude",
+    "Opinion change"
+  ];
+  const targetSkill = skillsList[Math.floor(nextRand() * skillsList.length)];
+
+  // 5. Estimated completion (10 to 15 minutes)
+  const estimatedCompletionMin = 10 + Math.floor(nextRand() * 6);
+
+  // 6. Difficulty
+  const difficulties = ["B1", "B2", "C1"] as const;
+  const difficulty = difficulties[Math.floor(nextRand() * difficulties.length)];
+
+  return {
+    dateStr,
+    topicId,
+    topicLabel,
+    questionType: qType as "20-30" | "35-40",
+    durationSec,
+    targetSkill,
+    estimatedCompletionMin,
+    difficulty
+  };
+};
+
 export default function App() {
+  const [activeTab, setActiveTab] = useState<"practice" | "history">("practice");
+  const [activeHistoryDetail, setActiveHistoryDetail] = useState<AdaptiveHistoryEntry | null>(null);
+  const [activeHistoryTab, setActiveHistoryTab] = useState<"questions" | "transcript" | "ai_coach">("questions");
+  const [requestingAICoachForHistoric, setRequestingAICoachForHistoric] = useState<string | null>(null);
   // State for session progress & database
   const [exercise, setExercise] = useState<TEFExercise | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<string>("random");
@@ -443,6 +549,22 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingTipIndex, setLoadingTipIndex] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [isDailyMissionSession, setIsDailyMissionSession] = useState<boolean>(false);
+  const dailyMission = getDailyMission();
+
+  // Dynamic Adaptive Difficulty State variables (with localStorage fallback)
+  const [dialogueComplexity, setDialogueComplexity] = useState<"standard" | "complex" | "highly-complex">(() => {
+    return (localStorage.getItem("tef_adaptive_complexity") as any) || "standard";
+  });
+  const [vocabularyLevel, setVocabularyLevel] = useState<"standard" | "advanced" | "highly-advanced">(() => {
+    return (localStorage.getItem("tef_adaptive_vocabulary") as any) || "standard";
+  });
+  const [impliedMeaningIntensity, setImpliedMeaningIntensity] = useState<"standard" | "subtle" | "highly-subtle">(() => {
+    return (localStorage.getItem("tef_adaptive_implied") as any) || "standard";
+  });
+  const [speechSpeedModifier, setSpeechSpeedModifier] = useState<"normal" | "fast" | "very-fast">(() => {
+    return (localStorage.getItem("tef_adaptive_speed") as any) || "normal";
+  });
 
   // Web Speech Fallback State
   const [isWebSpeechFallback, setIsWebSpeechFallback] = useState<boolean>(false);
@@ -928,9 +1050,17 @@ export default function App() {
       localStorage.removeItem("tef_week_stats");
       localStorage.removeItem("tef_adaptive_history");
       localStorage.removeItem("tef_historical_mastery");
+      localStorage.removeItem("tef_adaptive_complexity");
+      localStorage.removeItem("tef_adaptive_vocabulary");
+      localStorage.removeItem("tef_adaptive_implied");
+      localStorage.removeItem("tef_adaptive_speed");
       setTotalQuestions(0);
       setCorrectQuestions(0);
       setTotalSessions(0);
+      setDialogueComplexity("standard");
+      setVocabularyLevel("standard");
+      setImpliedMeaningIntensity("standard");
+      setSpeechSpeedModifier("normal");
       setTopicStats({});
       setSkillStats({
         "Implicit opinion": { correct: 0, total: 0 },
@@ -955,7 +1085,13 @@ export default function App() {
   };
 
   // Generate Exercise (Conversation & Questions)
-  const handleGenerateExercise = async () => {
+  const handleGenerateExercise = async (overrides?: {
+    topic?: string;
+    difficulty?: "B1" | "B2" | "C1";
+    questionType?: "20-30" | "35-40" | "mixed";
+    durationSec?: number;
+    isDaily?: boolean;
+  }) => {
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -979,6 +1115,13 @@ export default function App() {
     setLoadingCoach(false);
     setError(null);
     setLoading(true);
+
+    const actualTopic = overrides?.topic !== undefined ? overrides.topic : selectedTopic;
+    const actualDifficulty = overrides?.difficulty !== undefined ? overrides.difficulty : difficulty;
+    const actualQuestionType = overrides?.questionType !== undefined ? overrides.questionType : questionType;
+    const actualDurationSec = overrides?.durationSec !== undefined ? overrides.durationSec : durationSec;
+
+    setIsDailyMissionSession(!!overrides?.isDaily);
 
     // Analyze weaknesses for adaptive generation
     const topicsList = ["work", "travel", "housing", "environment", "shopping", "education", "health", "technology"];
@@ -1037,18 +1180,31 @@ export default function App() {
       weakTopic,
       weakSkills,
       weakQuestionType,
-      pastSessions
+      pastSessions,
+      dialogueComplexity,
+      vocabularyLevel,
+      impliedMeaningIntensity,
+      speechSpeedModifier
     };
+
+    // Adjust playback rate automatically based on speed modifier
+    let speedRate = 1.0;
+    if (speechSpeedModifier === "fast") {
+      speedRate = 1.1;
+    } else if (speechSpeedModifier === "very-fast") {
+      speedRate = 1.2;
+    }
+    setPlaybackRate(speedRate);
 
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          selectedTopic: selectedTopic === "random" ? "adaptive" : selectedTopic,
-          difficulty: difficulty,
-          questionType: questionType === "mixed" ? "adaptive" : questionType,
-          durationSec: durationSec,
+          selectedTopic: actualTopic === "random" ? "adaptive" : actualTopic,
+          difficulty: actualDifficulty,
+          questionType: actualQuestionType === "mixed" ? "adaptive" : actualQuestionType,
+          durationSec: actualDurationSec,
           adaptiveContext
         }),
       });
@@ -1060,9 +1216,9 @@ export default function App() {
 
       const data: TEFExercise = await response.json();
       setExercise(data);
-      setActiveDifficulty(difficulty);
-      setActiveQuestionType(questionType);
-      setActiveDurationSec(durationSec);
+      setActiveDifficulty(actualDifficulty);
+      setActiveQuestionType(actualQuestionType);
+      setActiveDurationSec(actualDurationSec);
 
       // Increment sessions count if saveSession is enabled
       if (saveSession) {
@@ -1072,7 +1228,7 @@ export default function App() {
       }
 
       // Instantly generate the speech for the conversation
-      await generateTTS(data.dialogue, difficulty);
+      await generateTTS(data.dialogue, actualDifficulty);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Impossible de générer l'entraînement. Veuillez réessayer.");
@@ -1129,65 +1285,55 @@ export default function App() {
       }
     });
 
-    let greeting = "";
+    const uniqueIncorrects = Array.from(new Set(incorrectSkills));
+    
+    // Strengths section
+    let strengthsText = "";
     if (score === 5) {
-      greeting = "### 🌟 Impressionnant ! Un Sans-Faute !\n\nFélicitations ! Tu as obtenu un score parfait de **5/5** dans cette session au niveau **" + activeDifficulty + "**. Ta capacité d'écoute active est remarquable et tu maîtrises parfaitement les subtilités du français parlé de Sophie et Marc.";
+      strengthsText = "- Maîtrise absolue du niveau **" + activeDifficulty + "**.\n- Excellente **écoute active** et décodage parfait des indices verbaux.";
     } else if (score >= 3) {
-      greeting = "### 👍 Bon travail ! Solides fondations\n\nBelle session avec un score de **" + score + "/5** au niveau **" + activeDifficulty + "**. Tu comprends l'essentiel de la conversation, mais certains pièges auditifs ou tournures de concessions subtiles ont ralenti ta progression.";
+      strengthsText = "- Bonne **compréhension globale** de l'échange.\n- Repérage efficace des **idées principales** de Sophie et Marc.";
     } else {
-      greeting = "### 🎯 Un défi d'apprentissage stimulant !\n\nScore de **" + score + "/5** aujourd'hui. C'est tout à fait normal au niveau de difficulté **" + activeDifficulty + "**, qui comporte des pièges de distraction et des structures complexes. Chaque erreur est un tremplin pour affûter ton écoute !";
+      strengthsText = "- Volonté d'apprentissage sur un niveau **défiant**.\n- Identification de certains **mots-clés** essentiels.";
     }
 
-    let coreAnalysis = "";
-    if (incorrectSkills.length > 0) {
-      const uniqueIncorrects = Array.from(new Set(incorrectSkills));
-      coreAnalysis = "#### 🔍 Analyse de tes points de vigilance sur cette session :\n\n";
-      uniqueIncorrects.forEach((skill) => {
-        const normalized = normalizeSkill(skill, 0);
-        if (normalized === "Implicit opinion") {
-          coreAnalysis += "- **Implicit opinion** : Sophie ou Marc expriment parfois leur opinion par de l'ironie, des soupirs, ou une intonation subtile plutôt que des termes directs. Prête attention au ton de la voix.\n";
-        } else if (normalized === "Explicit information") {
-          coreAnalysis += "- **Explicit information** : Reste concentré sur les faits purs, chiffres, dates ou détails directs énoncés, sans chercher à interpréter.\n";
-        } else if (normalized === "Speaker intention") {
-          coreAnalysis += "- **Speaker intention** : Essaie d'identifier l'objectif sous-jacent de la prise de parole du locuteur (convaincre, contredire, rassurer, informer).\n";
-        } else if (normalized === "Recommendation") {
-          coreAnalysis += "- **Recommendation** : Repère les conseils indirects formulés avec du subjonctif ou du conditionnel ('il conviendrait de', 'il faudrait').\n";
-        } else if (normalized === "Concession") {
-          coreAnalysis += "- **Concession** : Prête attention aux structures comme 'certes', 'soit' ou 'bien que' qui nuancent un premier argument d'opposition.\n";
-        } else if (normalized === "Negation") {
-          coreAnalysis += "- **Negation** : Repère les négations de restriction ('ne... que') ou inversions de sens ('ne... guère') qui piègent souvent les candidats.\n";
-        } else if (normalized === "Double negation") {
-          coreAnalysis += "- **Double negation** : L'accumulation de deux négations parlées (ex: 'Ce n'est pas faux') équivaut à une affirmation claire.\n";
-        } else if (normalized === "Inference") {
-          coreAnalysis += "- **Inference** : Déduis les faits non formulés en reliant logiquement plusieurs indices et éléments entendus au cours de la discussion.\n";
-        } else if (normalized === "Purpose") {
-          coreAnalysis += "- **Purpose** : Repère le sujet initial ou l'objectif sous-jacent de la discussion entre Sophie et Marc.\n";
-        } else if (normalized === "Attitude") {
-          coreAnalysis += "- **Attitude** : Détecte l'état d'esprit et l'émotion du locuteur (scepticisme, enthousiasme, déception) grâce au rythme et aux interjections.\n";
-        } else if (normalized === "Opinion change") {
-          coreAnalysis += "- **Opinion change** : Sois attentif au locuteur qui débute sur une opinion positive et bifurque ensuite suite à une concession.\n";
-        }
-      });
+    // Needs Improvement section
+    let needsImprovementText = "";
+    if (uniqueIncorrects.length > 0) {
+      const skill = uniqueIncorrects[0];
+      needsImprovementText = "- Difficulté sur le décodage de : **" + formatSkillDisplay(skill) + "**.\n- Besoin d'affiner l'écoute des **nuances expressives**.";
     } else {
-      coreAnalysis = "#### 🔍 Analyse de tes points de vigilance :\n\n- **Aucun point de vigilance détecté** sur cette session ! Vos compétences d'analyse des opinions implicites et des structures de concessions sont au plus haut.";
+      needsImprovementText = "- Aucun point faible majeur détecté lors de cette épreuve.\n- Continue à maintenir ce haut niveau de **vigilance auditive**.";
     }
 
+    // Today's Trap section
+    let trapText = "";
+    if (uniqueIncorrects.includes("Concession")) {
+      trapText = "- Le piège classique : un changement d'avis introduit par un mot de liaison comme **certes** ou **bien que**.";
+    } else if (uniqueIncorrects.includes("Implicit opinion")) {
+      trapText = "- L'opinion de Sophie/Marc n'est pas explicite; elle se cache dans l'**intonation** ou l'usage de l'**ironie**.";
+    } else if (uniqueIncorrects.includes("Double negation")) {
+      trapText = "- Attention aux **doubles négations** qui masquent en réalité une affirmation simple.";
+    } else {
+      trapText = "- Les **distracteurs lexicaux** : Sophie et Marc utilisent des mots similaires à la question mais avec un sens détourné.";
+    }
+
+    // Tomorrow's Focus section
+    let focusText = "";
     const weakestSkillEntry = (Object.entries(stats) as [string, { correct: number; total: number }][])
       .sort((a, b) => {
         const pctA = a[1].total > 0 ? (a[1].correct / a[1].total) : 0;
         const pctB = b[1].total > 0 ? (b[1].correct / b[1].total) : 0;
         return pctA - pctB;
       })[0];
-
-    let focusAdvice = "";
+    
     if (weakestSkillEntry) {
-      const name = weakestSkillEntry[0];
-      focusAdvice = "#### 📅 Plan d'entraînement personnalisé pour demain :\n\nTon historique global de performance montre que ta compétence la plus vulnérable est **" + name + "**. Demain, le simulateur augmentera dynamiquement la présence de dialogues de Sophie et Marc enrichis en **" + name + "** et conclusions implicites pour forcer un entraînement ultra-ciblé.";
+      focusText = "- Demain, nous ciblerons en priorité : **" + formatSkillDisplay(weakestSkillEntry[0]) + "**.\n- Pratique de l'**écoute ciblée** sans distracteurs.";
     } else {
-      focusAdvice = "#### 📅 Plan d'entraînement personnalisé pour demain :\n\nNous continuerons d'explorer les sujets du TEF Canada (environnement, travail, logement) avec des structures de concession avancées pour perfectionner ton agilité d'écoute active.";
+      focusText = "- Session d'entraînement adaptative concentrée sur les **opinions complexes**.";
     }
 
-    return greeting + "\n\n" + coreAnalysis + "\n" + focusAdvice;
+    return "### Strengths\n" + strengthsText + "\n\n### Needs Improvement\n" + needsImprovementText + "\n\n### Today's Trap\n" + trapText + "\n\n### Tomorrow's Focus\n" + focusText;
   };
 
   // Fetch feedback from the AI Coach endpoint (falls back to local rule-based generation)
@@ -1226,6 +1372,16 @@ export default function App() {
       const data = await response.json();
       if (data.feedback) {
         setCoachFeedback(data.feedback);
+        setAdaptiveHistory((prev) => {
+          if (prev.length === 0) return prev;
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            coachFeedback: data.feedback,
+          };
+          localStorage.setItem("tef_adaptive_history", JSON.stringify(updated));
+          return updated;
+        });
       } else {
         throw new Error("Aucun feedback généré.");
       }
@@ -1233,6 +1389,16 @@ export default function App() {
       console.warn("AI Coach API fell back to rule-based generation:", err);
       const fallback = generateLocalCoachFeedback(score, currentExercise, currentAnswers, currentSkillStats);
       setCoachFeedback(fallback);
+      setAdaptiveHistory((prev) => {
+        if (prev.length === 0) return prev;
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...updated[updated.length - 1],
+          coachFeedback: fallback,
+        };
+        localStorage.setItem("tef_adaptive_history", JSON.stringify(updated));
+        return updated;
+      });
     } finally {
       setLoadingCoach(false);
     }
@@ -1467,6 +1633,23 @@ export default function App() {
         }
       });
 
+      let sessionScoreVal = 0;
+      const sessionAccuracy = (score / 5) * 100;
+      if (sessionAccuracy < 30) {
+        sessionScoreVal = Math.round((sessionAccuracy / 30) * 199);
+      } else if (sessionAccuracy < 50) {
+        sessionScoreVal = Math.round(200 + ((sessionAccuracy - 30) / 20) * 99);
+      } else if (sessionAccuracy < 70) {
+        sessionScoreVal = Math.round(300 + ((sessionAccuracy - 50) / 20) * 99);
+      } else if (sessionAccuracy < 85) {
+        sessionScoreVal = Math.round(400 + ((sessionAccuracy - 70) / 15) * 99);
+      } else if (sessionAccuracy < 95) {
+        sessionScoreVal = Math.round(500 + ((sessionAccuracy - 85) / 10) * 99);
+      } else {
+        sessionScoreVal = Math.round(600 + ((sessionAccuracy - 95) / 5) * 99);
+        if (sessionScoreVal > 699) sessionScoreVal = 699;
+      }
+
       const newHistoryEntry: AdaptiveHistoryEntry = {
         id: "session-" + Date.now(),
         timestamp: new Date().toISOString(),
@@ -1477,7 +1660,10 @@ export default function App() {
         total: 5,
         elapsedTime: elapsedTime,
         weakSkills: currentSessionWeakSkills,
-        dialogueTopicSummary: exercise.subTopic || (exercise.dialogue && exercise.dialogue[0] ? exercise.dialogue[0].text.substring(0, 80) + "..." : "Sujet d'évaluation TEF")
+        dialogueTopicSummary: exercise.subTopic || (exercise.dialogue && exercise.dialogue[0] ? exercise.dialogue[0].text.substring(0, 80) + "..." : "Sujet d'évaluation TEF"),
+        exercise: exercise,
+        selectedAnswers: selectedAnswers,
+        estimatedTefScore: sessionScoreVal
       };
 
       const updatedHistory = [...adaptiveHistory, newHistoryEntry];
@@ -1516,6 +1702,78 @@ export default function App() {
       const updatedMastery = [...historicalMastery, newSnapshot];
       setHistoricalMastery(updatedMastery);
       localStorage.setItem("tef_historical_mastery", JSON.stringify(updatedMastery));
+
+      // --- MOTEUR D'ADAPTATION DE DIFFICULTÉ AUTOMATIQUE ---
+      // If user scores >= 90% (5/5 is 100%): Increase difficulty parameters
+      if (score === 5) {
+        let nextComplexity = dialogueComplexity;
+        let nextVocab = vocabularyLevel;
+        let nextImplied = impliedMeaningIntensity;
+        let nextSpeed = speechSpeedModifier;
+        let nextDifficulty = activeDifficulty;
+
+        if (dialogueComplexity === "standard") nextComplexity = "complex";
+        else if (dialogueComplexity === "complex") nextComplexity = "highly-complex";
+
+        if (vocabularyLevel === "standard") nextVocab = "advanced";
+        else if (vocabularyLevel === "advanced") nextVocab = "highly-advanced";
+
+        if (impliedMeaningIntensity === "standard") nextImplied = "subtle";
+        else if (impliedMeaningIntensity === "subtle") nextImplied = "highly-subtle";
+
+        if (speechSpeedModifier === "normal") nextSpeed = "fast";
+        else if (speechSpeedModifier === "fast") nextSpeed = "very-fast";
+
+        if (activeDifficulty === "B1") nextDifficulty = "B2";
+        else if (activeDifficulty === "B2") nextDifficulty = "C1";
+
+        setDialogueComplexity(nextComplexity);
+        setVocabularyLevel(nextVocab);
+        setImpliedMeaningIntensity(nextImplied);
+        setSpeechSpeedModifier(nextSpeed);
+        setDifficulty(nextDifficulty);
+
+        localStorage.setItem("tef_adaptive_complexity", nextComplexity);
+        localStorage.setItem("tef_adaptive_vocabulary", nextVocab);
+        localStorage.setItem("tef_adaptive_implied", nextImplied);
+        localStorage.setItem("tef_adaptive_speed", nextSpeed);
+        localStorage.setItem("tef_difficulty", nextDifficulty);
+      }
+      // If score drops (<= 3/5 correct, i.e. <= 60%): Reduce difficulty parameters but keep B2 objective as baseline
+      else if (score <= 3) {
+        let nextComplexity = dialogueComplexity;
+        let nextVocab = vocabularyLevel;
+        let nextImplied = impliedMeaningIntensity;
+        let nextSpeed = speechSpeedModifier;
+        let nextDifficulty = activeDifficulty;
+
+        if (dialogueComplexity === "highly-complex") nextComplexity = "complex";
+        else if (dialogueComplexity === "complex") nextComplexity = "standard";
+
+        if (vocabularyLevel === "highly-advanced") nextVocab = "advanced";
+        else if (vocabularyLevel === "advanced") nextVocab = "standard";
+
+        if (impliedMeaningIntensity === "highly-subtle") nextImplied = "subtle";
+        else if (impliedMeaningIntensity === "subtle") nextImplied = "standard";
+
+        if (speechSpeedModifier === "very-fast") nextSpeed = "fast";
+        else if (speechSpeedModifier === "fast") nextSpeed = "normal";
+
+        // Keep B2 objective (never drop below B2 when adapting down)
+        nextDifficulty = "B2";
+
+        setDialogueComplexity(nextComplexity);
+        setVocabularyLevel(nextVocab);
+        setImpliedMeaningIntensity(nextImplied);
+        setSpeechSpeedModifier(nextSpeed);
+        setDifficulty(nextDifficulty);
+
+        localStorage.setItem("tef_adaptive_complexity", nextComplexity);
+        localStorage.setItem("tef_adaptive_vocabulary", nextVocab);
+        localStorage.setItem("tef_adaptive_implied", nextImplied);
+        localStorage.setItem("tef_adaptive_speed", nextSpeed);
+        localStorage.setItem("tef_difficulty", nextDifficulty);
+      }
     }
 
     setQuizFinished(true);
@@ -1530,6 +1788,734 @@ export default function App() {
     if (currentQuestionIndex < 4) {
       setCurrentQuestionIndex((prev) => prev + 1);
     }
+  };
+
+  const handleOpenHistoryDetails = (entry: AdaptiveHistoryEntry, subTab: "questions" | "transcript" | "ai_coach") => {
+    setActiveHistoryDetail(entry);
+    setActiveHistoryTab(subTab);
+  };
+
+  const handleReplaySession = (entry: AdaptiveHistoryEntry) => {
+    if (!entry.exercise) {
+      alert("Désolé, cette session factice d'historique ne dispose pas d'enregistrement. Veuillez démarrer une nouvelle épreuve réelle pour l'essayer !");
+      return;
+    }
+    setExercise(entry.exercise);
+    setQuizFinished(false);
+    setSelectedAnswers({});
+    setCurrentQuestionIndex(0);
+    setElapsedTime(0);
+    setIsWebSpeechFallback(false);
+    setActiveTab("practice");
+  };
+
+  const getSessionTEFScore = (score: number): number => {
+    const accuracy = (score / 5) * 100;
+    let scoreVal = 0;
+    if (accuracy < 30) {
+      scoreVal = Math.round((accuracy / 30) * 199);
+    } else if (accuracy < 50) {
+      scoreVal = Math.round(200 + ((accuracy - 30) / 20) * 99);
+    } else if (accuracy < 70) {
+      scoreVal = Math.round(300 + ((accuracy - 50) / 20) * 99);
+    } else if (accuracy < 85) {
+      scoreVal = Math.round(400 + ((accuracy - 70) / 15) * 99);
+    } else if (accuracy < 95) {
+      scoreVal = Math.round(500 + ((accuracy - 85) / 10) * 99);
+    } else {
+      scoreVal = Math.round(600 + ((accuracy - 95) / 5) * 99);
+      if (scoreVal > 699) scoreVal = 699;
+    }
+    return scoreVal;
+  };
+
+  const handleRequestHistoricAICoach = async (entry: AdaptiveHistoryEntry) => {
+    if (!entry.exercise) return;
+    setRequestingAICoachForHistoric(entry.id);
+    try {
+      const sessionQuestions = entry.exercise.questions.map((q) => ({
+        text: q.questionText,
+        skillTested: q.skillTested || "Implicit opinion",
+        correctAnswer: q.correctAnswer,
+        userAnswer: entry.selectedAnswers ? entry.selectedAnswers[q.id] : "A",
+        isCorrect: entry.selectedAnswers ? entry.selectedAnswers[q.id] === q.correctAnswer : false,
+      }));
+
+      const response = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionQuestions,
+          sessionScore: entry.score,
+          skillStats,
+          activeDifficulty: entry.difficulty,
+        }),
+      });
+
+      let feedback = "";
+      if (response.ok) {
+        const data = await response.json();
+        feedback = data.feedback;
+      } else {
+        feedback = generateLocalCoachFeedback(
+          entry.score,
+          entry.exercise,
+          entry.selectedAnswers || {},
+          skillStats
+        );
+      }
+
+      setAdaptiveHistory((prev) => {
+        const updated = prev.map((item) => {
+          if (item.id === entry.id) {
+            return { ...item, coachFeedback: feedback };
+          }
+          return item;
+        });
+        localStorage.setItem("tef_adaptive_history", JSON.stringify(updated));
+        return updated;
+      });
+
+      setActiveHistoryDetail((prev) => {
+        if (prev && prev.id === entry.id) {
+          return { ...prev, coachFeedback: feedback };
+        }
+        return prev;
+      });
+
+    } catch (error) {
+      console.error("AI Coach Historic review failed:", error);
+      const fallback = generateLocalCoachFeedback(
+        entry.score,
+        entry.exercise,
+        entry.selectedAnswers || {},
+        skillStats
+      );
+      setAdaptiveHistory((prev) => {
+        const updated = prev.map((item) => {
+          if (item.id === entry.id) {
+            return { ...item, coachFeedback: fallback };
+          }
+          return item;
+        });
+        localStorage.setItem("tef_adaptive_history", JSON.stringify(updated));
+        return updated;
+      });
+      setActiveHistoryDetail((prev) => {
+        if (prev && prev.id === entry.id) {
+          return { ...prev, coachFeedback: fallback };
+        }
+        return prev;
+      });
+    } finally {
+      setRequestingAICoachForHistoric(null);
+    }
+  };
+
+  const renderHistoryQuestionsTab = (entry: AdaptiveHistoryEntry) => {
+    if (!entry.exercise) {
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center max-w-md mx-auto space-y-4 my-4">
+          <div className="w-12 h-12 bg-slate-50 text-slate-400 border border-slate-100 rounded-xl flex items-center justify-center mx-auto shadow-2xs">
+            <Lock size={20} />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-slate-800">Données restreintes</h4>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+              Cette session est pré-chargée à titre d'exemple et ne dispose pas d'analyse détaillée des questions. Réalisez de nouvelles épreuves pour enregistrer l'intégralité de vos réponses !
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setActiveHistoryDetail(null);
+              setActiveTab("practice");
+            }}
+            className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl cursor-pointer shadow-xs transition"
+          >
+            Lancer un nouvel entraînement
+          </button>
+        </div>
+      );
+    }
+
+    const ex = entry.exercise;
+    const userAnswers = entry.selectedAnswers || {};
+
+    return (
+      <div className="space-y-6 text-left max-w-3xl mx-auto">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-bold tracking-widest text-slate-400 uppercase font-display">
+            RÉPONSES DE LA SESSION
+          </h4>
+          <span className="text-xs font-extrabold text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+            Score : {entry.score} / 5 correct
+          </span>
+        </div>
+
+        <div className="space-y-4">
+          {ex.questions.map((q, idx) => {
+            const chosen = userAnswers[q.id];
+            const isCorrect = chosen === q.correctAnswer;
+            const skill = q.skillTested || "Implicit opinion";
+
+            return (
+              <div
+                key={q.id}
+                className="bg-white rounded-xl border border-slate-200/70 p-5 space-y-4 shadow-3xs"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider">
+                      Question {idx + 1} • {formatSkillDisplay(skill)}
+                    </span>
+                    <h5 className="text-sm font-extrabold text-slate-800 leading-snug">
+                      {q.questionText}
+                    </h5>
+                  </div>
+                  {chosen ? (
+                    isCorrect ? (
+                      <span className="text-emerald-600 bg-emerald-50 border border-emerald-100 text-xs font-extrabold px-2.5 py-1 rounded-lg flex items-center gap-1 shrink-0">
+                        <CheckCircle2 size={13} />
+                        Correct
+                      </span>
+                    ) : (
+                      <span className="text-rose-600 bg-rose-50 border border-rose-100 text-xs font-extrabold px-2.5 py-1 rounded-lg flex items-center gap-1 shrink-0">
+                        <XCircle size={13} />
+                        Incorrect
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-slate-400 bg-slate-50 border border-slate-200/60 text-xs font-medium px-2.5 py-1 rounded-lg shrink-0">
+                      Non répondu
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {q.options.map((opt) => {
+                    const isOptionCorrect = opt.key === q.correctAnswer;
+                    const isOptionChosen = opt.key === chosen;
+
+                    let bgClass = "bg-slate-50/55 border-slate-100 text-slate-700";
+                    let checkIcon = "☐";
+                    if (isOptionCorrect) {
+                      bgClass = "bg-emerald-50/60 border-emerald-200 text-emerald-900 font-medium";
+                      checkIcon = "☑";
+                    } else if (isOptionChosen) {
+                      bgClass = "bg-rose-50/60 border-rose-200 text-rose-900 font-medium";
+                      checkIcon = "☒";
+                    }
+
+                    return (
+                      <div
+                        key={opt.key}
+                        className={`p-3 rounded-lg border text-xs flex items-center justify-between gap-3 ${bgClass}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="font-extrabold text-indigo-600/70">{opt.key}.</span>
+                          <span>{opt.text}</span>
+                        </span>
+                        <span className="text-xs font-extrabold opacity-70">{checkIcon}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                  <div className="p-3 bg-emerald-50/10 border border-emerald-100/40 rounded-lg space-y-1">
+                    <span className="text-[9px] uppercase tracking-wider text-emerald-700 font-extrabold block">
+                      Stratégie d'écoute
+                    </span>
+                    <p className="text-xs text-slate-600 leading-relaxed font-normal">
+                      {q.why || q.explanation}
+                    </p>
+                  </div>
+                  {q.commonTrap || q.trap ? (
+                    <div className="p-3 bg-amber-50/10 border border-amber-100/40 rounded-lg space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-amber-700 font-extrabold block">
+                        Piège classique
+                      </span>
+                      <p className="text-xs text-slate-600 leading-relaxed font-normal">
+                        {q.commonTrap || q.trap}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderHistoryTranscriptTab = (entry: AdaptiveHistoryEntry) => {
+    if (!entry.exercise) {
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center max-w-md mx-auto space-y-4 my-4">
+          <div className="w-12 h-12 bg-slate-50 text-slate-400 border border-slate-100 rounded-xl flex items-center justify-center mx-auto shadow-2xs">
+            <Lock size={20} />
+          </div>
+          <div>
+            <h4 className="font-extrabold text-slate-800">Transcription restreinte</h4>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+              Les transcriptions complètes ne sont disponibles que pour les sessions réelles enregistrées lors de votre pratique active.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    const dialogue = entry.exercise.dialogue || [];
+    
+    return (
+      <div className="space-y-5 text-left max-w-3xl mx-auto">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h4 className="text-xs font-bold tracking-widest text-slate-400 uppercase font-display">
+            TRANSCRIPTION DE L'ENREGISTREMENT
+          </h4>
+          <span className="text-xs text-slate-400 font-medium">
+            2 interlocuteurs : Sophie & Marc
+          </span>
+        </div>
+
+        <div className="p-4 bg-indigo-50/45 border border-indigo-100 rounded-2xl flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <span className="text-xs font-extrabold text-indigo-900 block leading-tight">
+              Réécoute Audio Interactive
+            </span>
+            <p className="text-[11px] text-slate-500 leading-normal">
+              Pour écouter l'enregistrement audio original de Sophie & Marc avec le lecteur interactif, relancez l'épreuve.
+            </p>
+          </div>
+          
+          <button
+            onClick={() => {
+              handleReplaySession(entry);
+              setActiveHistoryDetail(null);
+            }}
+            className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+          >
+            <Play size={11} fill="white" />
+            Rejouer l'Épreuve
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {dialogue.map((line, idx) => {
+            const isSophie = line.speaker === "Sophie";
+            return (
+              <div
+                key={idx}
+                className={`flex gap-3.5 ${isSophie ? "justify-start text-left" : "justify-end text-right"}`}
+              >
+                {isSophie && (
+                  <div className="w-8 h-8 rounded-full bg-rose-100 border border-rose-200 flex items-center justify-center font-bold text-rose-700 text-xs shrink-0 mt-1">
+                    S
+                  </div>
+                )}
+                <div
+                  className={`p-3.5 rounded-2xl max-w-lg shadow-3xs ${
+                    isSophie
+                      ? "bg-rose-50/50 border border-rose-100/85 text-slate-800 rounded-tl-xs"
+                      : "bg-indigo-50/40 border border-indigo-100/70 text-slate-800 rounded-tr-xs"
+                  }`}
+                >
+                  <div className={`text-[10px] font-black uppercase tracking-wider mb-1 ${isSophie ? "text-rose-700" : "text-indigo-700"}`}>
+                    {line.speaker}
+                  </div>
+                  <p className="text-xs md:text-sm leading-relaxed text-slate-700">
+                    {line.text}
+                  </p>
+                </div>
+                {!isSophie && (
+                  <div className="w-8 h-8 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center font-bold text-indigo-700 text-xs shrink-0 mt-1">
+                    M
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderHistoryAICoachTab = (entry: AdaptiveHistoryEntry) => {
+    const feedback = entry.coachFeedback;
+
+    if (!feedback) {
+      if (entry.exercise) {
+        const isRequesting = requestingAICoachForHistoric === entry.id;
+        return (
+          <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center max-w-md mx-auto space-y-4 my-4">
+            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl flex items-center justify-center mx-auto shadow-2xs text-lg">
+              🎯
+            </div>
+            <div>
+              <h4 className="font-extrabold text-slate-800">Analyse de correction indisponible</h4>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                Le Coach IA n'a pas encore analysé cette session. Générez l'analyse maintenant en contactant le moteur d'évaluation adaptative de l'IA !
+              </p>
+            </div>
+            <button
+              onClick={() => handleRequestHistoricAICoach(entry)}
+              disabled={isRequesting}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl cursor-pointer shadow-xs transition flex items-center justify-center gap-2 disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              <Sparkles size={14} className={isRequesting ? "animate-spin" : ""} />
+              {isRequesting ? "ANALYSE EN COURS..." : "DÉMARRER L'ANALYSE COACH IA"}
+            </button>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-6 text-left max-w-2xl mx-auto">
+          <div className="flex items-center gap-3 bg-indigo-50/60 p-4 border border-indigo-100 rounded-2xl">
+            <Brain className="text-indigo-600" size={24} />
+            <div>
+              <h4 className="font-extrabold text-indigo-900 text-sm">Conseil du Coach de l'Historique</h4>
+              <p className="text-slate-600 text-xs mt-0.5">
+                Sur la base de votre performance globale estimée à un niveau supérieur à **B2** :
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-2">
+              <h5 className="text-sm font-extrabold text-indigo-600">Forces détectées</h5>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                - Excellente écoute des **expressions idiomatiques** et de la **concession** orale.<br />
+                - Excellente distinction des **distracteurs phonétiques** dans la Section 20-30.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-2">
+              <h5 className="text-sm font-extrabold text-indigo-600">Recommandation Stratégique</h5>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Ciblez la compétence **Double négation** et repérez les moments de concession forte (par exemple : 'Certes, Sophie accepte au départ, mais Marc introduit un obstacle crucial').
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4 text-left max-w-2xl mx-auto">
+        <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+          <Sparkles className="text-indigo-600" size={18} />
+          <h4 className="text-xs font-bold tracking-widest text-slate-400 uppercase font-display">
+            RAPPORT CORRECTIF PERSONNALISÉ (COACH IA)
+          </h4>
+        </div>
+        
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 space-y-4 shadow-sm relative overflow-hidden">
+          <div className="absolute right-0 top-0 w-32 h-32 bg-indigo-50/20 rounded-bl-full pointer-events-none" />
+          
+          <div className="markdown-body text-xs md:text-sm text-slate-700 leading-relaxed space-y-4">
+            {renderMarkdown(feedback)}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderHistoryDetailsModal = () => {
+    if (!activeHistoryDetail) return null;
+    const entry = activeHistoryDetail;
+    const topicDetails = TOPICS.find((t) => t.id === entry.topic);
+    const dateObj = new Date(entry.timestamp);
+    const formattedDate = dateObj.toLocaleDateString("fr-FR", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    return (
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+        <div
+          className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-6 border-b border-slate-200/80 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3 text-left">
+              <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center shrink-0 shadow-2xs text-2xl">
+                {topicDetails?.icon || "🎯"}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600">
+                    {topicDetails?.label || entry.topic}
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full border border-slate-200/50">
+                    Niveau {entry.difficulty}
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 font-display mt-0.5">
+                  {entry.dialogueTopicSummary || "Évaluation TEF"}
+                </h3>
+                <p className="text-slate-400 text-xs font-medium">
+                  Complété le {formattedDate} • Score de {entry.score}/5 ({entry.estimatedTefScore || getSessionTEFScore(entry.score)} pts TEF)
+                </p>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => setActiveHistoryDetail(null)}
+              className="py-1 px-3 border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-800 rounded-xl text-xs font-bold uppercase tracking-wide transition cursor-pointer self-start md:self-auto"
+            >
+              Fermer
+            </button>
+          </div>
+
+          <div className="flex border-b border-slate-200 px-6 bg-white gap-6 shrink-0">
+            {(["questions", "transcript", "ai_coach"] as const).map((tab) => {
+              const isActive = activeHistoryTab === tab;
+              const label =
+                tab === "questions"
+                  ? "Correction"
+                  : tab === "transcript"
+                  ? "Transcription Audio"
+                  : "Analyse Coach IA";
+              const icon =
+                tab === "questions" ? (
+                  <BookmarkCheck size={14} />
+                ) : tab === "transcript" ? (
+                  <Languages size={14} />
+                ) : (
+                  <Sparkles size={14} />
+                );
+
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setActiveHistoryTab(tab)}
+                  className={`py-3.5 font-bold text-xs uppercase tracking-wider border-b-2 transition flex items-center gap-1.5 cursor-pointer ${
+                    isActive
+                      ? "border-indigo-600 text-indigo-600"
+                      : "border-transparent text-slate-400 hover:text-slate-700"
+                  }`}
+                >
+                  {icon}
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex-1 p-6 overflow-y-auto bg-slate-50/50">
+            {activeHistoryTab === "questions" && renderHistoryQuestionsTab(entry)}
+            {activeHistoryTab === "transcript" && renderHistoryTranscriptTab(entry)}
+            {activeHistoryTab === "ai_coach" && renderHistoryAICoachTab(entry)}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderHistoryPage = () => {
+    const sortedHistory = [...adaptiveHistory].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    return (
+      <div className="max-w-6xl mx-auto space-y-6 w-full py-4 font-sans">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+          <div className="text-left">
+            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight font-display flex items-center gap-2">
+              <History className="text-indigo-600" size={24} />
+              Historique des Sessions
+            </h2>
+            <p className="text-slate-500 text-sm mt-1">
+              Consultez vos évaluations passées, lancez des replays interactifs, révisez les transcriptions orales, et accédez à l'analyse corrective de votre Coach IA.
+            </p>
+          </div>
+          <button
+            onClick={handleResetStats}
+            disabled={adaptiveHistory.length === 0}
+            className="flex items-center gap-2 py-2 px-4 border border-red-200 hover:bg-red-50 disabled:opacity-35 disabled:cursor-not-allowed text-red-600 font-bold text-xs uppercase tracking-wider rounded-xl transition cursor-pointer shrink-0"
+          >
+            <Trash2 size={14} />
+            Effacer tout l'historique
+          </button>
+        </div>
+
+        {sortedHistory.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center max-w-md mx-auto space-y-4 my-8">
+            <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mx-auto border border-slate-100 shadow-2xs">
+              <History size={32} />
+            </div>
+            <div>
+              <h3 className="text-lg font-extrabold text-slate-900">Aucun historique trouvé</h3>
+              <p className="text-slate-400 text-xs mt-1 leading-relaxed">
+                Vous n'avez pas encore effectué de sessions d'évaluation. Complétez un quiz d'entraînement pour enregistrer vos performances !
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab("practice")}
+              className="py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-xs transition-colors cursor-pointer"
+            >
+              Démarrer ma première épreuve
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {sortedHistory.map((entry) => {
+              const dateObj = new Date(entry.timestamp);
+              const formattedDate = dateObj.toLocaleDateString("fr-FR", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              });
+              const formattedTime = dateObj.toLocaleTimeString("fr-FR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+              const topicDetails = TOPICS.find((t) => t.id === entry.topic);
+              const isPerfect = entry.score === 5;
+              const formattedDuration = `${Math.floor(entry.elapsedTime / 60)}m ${entry.elapsedTime % 60}s`;
+
+              return (
+                <div
+                  key={entry.id}
+                  id={entry.id}
+                  className="bg-white rounded-2xl border border-slate-200/80 p-5 md:p-6 shadow-2xs hover:shadow-xs transition duration-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden group text-left"
+                >
+                  <div
+                    className={`absolute left-0 top-0 bottom-0 w-1.5 ${
+                      isPerfect ? "bg-emerald-500" : entry.score >= 3 ? "bg-indigo-500" : "bg-amber-500"
+                    }`}
+                  />
+
+                  <div className="flex items-start gap-4 flex-1">
+                    <div className="w-12 h-12 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-2xl shadow-3xs shrink-0 mt-0.5">
+                      {topicDetails?.icon || "🎯"}
+                    </div>
+                    <div className="space-y-1 text-left flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">
+                          {topicDetails?.label || entry.topic}
+                        </span>
+                        <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-full border border-slate-200/50">
+                          Niveau {entry.difficulty}
+                        </span>
+                        <span className="text-[10px] bg-indigo-50 text-indigo-700 font-medium px-2 py-0.5 rounded-full border border-indigo-100/50">
+                          {entry.questionType === "mixed" ? "Section Mixte" : `Section ${entry.questionType}`}
+                        </span>
+                      </div>
+                      <h3 className="text-base font-extrabold text-slate-800 line-clamp-1 leading-tight pr-4">
+                        {entry.dialogueTopicSummary || "Sujet d'évaluation TEF"}
+                      </h3>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-400 font-medium">
+                        <span className="flex items-center gap-1">
+                          <Calendar size={12} />
+                          {formattedDate} à {formattedTime}
+                        </span>
+                        <span className="text-slate-200">•</span>
+                        <span className="flex items-center gap-1">
+                          <Clock size={12} />
+                          {formattedDuration}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-5 md:gap-8 min-w-[280px]">
+                    <div className="text-left shrink-0">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold block mb-0.5">
+                        Performance
+                      </span>
+                      <div className="flex items-baseline gap-1">
+                        <span
+                          className={`text-2xl font-black ${
+                            isPerfect ? "text-emerald-600" : entry.score >= 3 ? "text-indigo-600" : "text-amber-500"
+                          }`}
+                        >
+                          {entry.score}
+                        </span>
+                        <span className="text-sm font-semibold text-slate-400">/ 5</span>
+                      </div>
+                    </div>
+
+                    <div className="text-left shrink-0">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold block mb-0.5">
+                        Score TEF Est.
+                      </span>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-lg font-black text-slate-800">
+                          {entry.estimatedTefScore || getSessionTEFScore(entry.score)}
+                        </span>
+                        <span className="text-[10px] font-extrabold text-indigo-600 uppercase">
+                          ({entry.score === 5 ? "C1" : entry.score === 4 ? "B2" : entry.score === 3 ? "B1" : "A2"})
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="text-left max-w-[200px] flex-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold block mb-1">
+                        À Travailler
+                      </span>
+                      {entry.weakSkills.length === 0 ? (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-700 font-black uppercase tracking-wide px-2 py-0.5 rounded-md border border-emerald-100">
+                          ★ Parfait
+                        </span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {entry.weakSkills.map((skill, sIdx) => (
+                            <span
+                              key={sIdx}
+                              className="text-[9px] bg-rose-50 text-rose-700 border border-rose-100 font-bold px-1.5 py-0.5 rounded-md truncate max-w-[120px]"
+                              title={formatSkillDisplay(skill)}
+                            >
+                              {formatSkillDisplay(skill)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap md:flex-nowrap items-center gap-2 shrink-0 w-full md:w-auto border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
+                    <button
+                      onClick={() => handleOpenHistoryDetails(entry, "questions")}
+                      className="flex-1 md:flex-none flex items-center justify-center gap-1.5 py-2 px-3 hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-bold text-[11px] uppercase tracking-wider transition cursor-pointer"
+                    >
+                      <Eye size={12} />
+                      Correction
+                    </button>
+
+                    <button
+                      onClick={() => handleOpenHistoryDetails(entry, "ai_coach")}
+                      className="flex-1 md:flex-none flex items-center justify-center gap-1.5 py-2 px-3 bg-indigo-50/70 hover:bg-indigo-50 text-indigo-700 border border-indigo-100/50 rounded-xl font-bold text-[11px] uppercase tracking-wider transition cursor-pointer"
+                    >
+                      <Sparkles size={12} />
+                      Coach IA
+                    </button>
+
+                    <button
+                      onClick={() => handleReplaySession(entry)}
+                      disabled={!entry.exercise}
+                      title={entry.exercise ? "Relancer cette session" : "Session factice d'historique (audio indisponible)"}
+                      className="flex-1 md:flex-none flex items-center justify-center gap-1.5 py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-[11px] uppercase tracking-wider transition disabled:opacity-35 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+                    >
+                      <Play size={11} fill="white" />
+                      Rejouer
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {activeHistoryDetail && renderHistoryDetailsModal()}
+      </div>
+    );
   };
 
   // Calculate stats
@@ -1640,6 +2626,43 @@ export default function App() {
               </span>
             </h1>
           </div>
+        </div>
+
+        {/* Navigation Tabs - Responsive & Professional */}
+        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/60 font-display">
+          <button
+            onClick={() => {
+              setActiveTab("practice");
+            }}
+            className={`px-3 md:px-5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "practice"
+                ? "bg-white text-indigo-600 shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <Compass size={14} />
+            <span className="hidden sm:inline">Entraînement</span>
+            <span className="sm:hidden">Quiz</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("history");
+            }}
+            className={`px-3 md:px-5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "history"
+                ? "bg-white text-indigo-600 shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <History size={14} />
+            <span className="hidden sm:inline">Historique</span>
+            <span className="sm:hidden">Hist.</span>
+            {adaptiveHistory.length > 0 && (
+              <span className="bg-indigo-100 text-indigo-700 text-[10px] font-black px-1.5 py-0.5 rounded-full leading-none">
+                {adaptiveHistory.length}
+              </span>
+            )}
+          </button>
         </div>
 
         <div className="flex items-center gap-4 md:gap-6">
@@ -1964,8 +2987,9 @@ export default function App() {
 
         {/* RIGHT AREA: Active Test Center / Questionnaire */}
         <section className="flex-1 p-6 md:p-8 flex flex-col gap-6 overflow-y-auto bg-slate-50">
-          {/* Welcome Dashboard or Quiz */}
-          {!exercise && !loading ? (
+          {activeTab === "history" ? (
+            renderHistoryPage()
+          ) : !exercise && !loading ? (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1994,6 +3018,230 @@ export default function App() {
                   <Sparkles size={14} />
                   Démarrer l'Épreuve
                 </button>
+              </div>
+
+              {/* Daily Mission Panel */}
+              <div id="daily-mission-panel" className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs relative overflow-hidden flex flex-col gap-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center shrink-0 border border-rose-100 shadow-2xs">
+                      <Target size={20} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-extrabold text-slate-900 font-display">
+                          Today's Objective
+                        </h3>
+                        <span className="text-[9px] bg-rose-50 text-rose-600 font-black uppercase px-2 py-0.5 rounded-full border border-rose-100 animate-pulse">
+                          Quotidien
+                        </span>
+                      </div>
+                      <p className="text-slate-400 text-xs mt-0.5">
+                        Accomplissez cette mission pour valider vos objectifs d'apprentissage du jour.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-400 text-xs font-mono bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1 self-start md:self-auto">
+                    <Calendar size={13} className="text-slate-400" />
+                    <span>{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  {/* Question Type */}
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex flex-col justify-between hover:bg-slate-50/80 transition-all">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <BookOpen size={15} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider font-display">Question Segment</span>
+                    </div>
+                    <span className="text-sm font-extrabold text-slate-800 mt-2 block">
+                      Questions {dailyMission.questionType === "20-30" ? "20–30" : "35–40"}
+                    </span>
+                  </div>
+
+                  {/* Topic */}
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex flex-col justify-between hover:bg-slate-50/80 transition-all">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Home size={15} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider font-display">Sujet / Topic</span>
+                    </div>
+                    <span className="text-sm font-extrabold text-slate-800 mt-2 block capitalize">
+                      {dailyMission.topicLabel}
+                    </span>
+                  </div>
+
+                  {/* Audio Duration */}
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex flex-col justify-between hover:bg-slate-50/80 transition-all">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Clock size={15} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider font-display">Audio Duration</span>
+                    </div>
+                    <span className="text-sm font-extrabold text-slate-800 mt-2 block">
+                      {dailyMission.durationSec} seconds
+                    </span>
+                  </div>
+
+                  {/* Target Skill */}
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex flex-col justify-between hover:bg-slate-50/80 transition-all col-span-2 md:col-span-1">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Compass size={15} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider font-display">Target Skill</span>
+                    </div>
+                    <span className="text-sm font-extrabold text-slate-800 mt-2 block">
+                      {formatSkillDisplay(dailyMission.targetSkill)}
+                    </span>
+                  </div>
+
+                  {/* Estimated Completion */}
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 flex flex-col justify-between hover:bg-slate-50/80 transition-all col-span-2 md:col-span-1">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Hourglass size={15} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider font-display">Est. Completion</span>
+                    </div>
+                    <span className="text-sm font-extrabold text-slate-800 mt-2 block">
+                      {dailyMission.estimatedCompletionMin} minutes
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <span>Updates automatically every day • Deterministic daily rotation</span>
+                  </div>
+                  <button
+                    onClick={() => handleGenerateExercise({
+                      topic: dailyMission.topicId,
+                      difficulty: dailyMission.difficulty,
+                      questionType: dailyMission.questionType,
+                      durationSec: dailyMission.durationSec,
+                      isDaily: true
+                    })}
+                    disabled={loading}
+                    className="w-full sm:w-auto py-3 px-6 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md shadow-rose-100 hover:shadow-lg hover:shadow-rose-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                  >
+                    <Sparkles size={14} />
+                    {loading ? "GENERATING..." : "Start Session"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Dynamic Auto-Adaptive Difficulty Status Dashboard */}
+              <div id="adaptive-difficulty-dashboard" className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl border border-indigo-900/60 p-6 shadow-xl space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-white/10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-indigo-500/10 text-indigo-400 rounded-xl flex items-center justify-center shrink-0 border border-indigo-500/20 shadow-inner">
+                      <Cpu size={20} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-black uppercase tracking-wider text-white font-display">
+                          Moteur d'Adaptation de Difficulté Dynamique
+                        </h3>
+                        <span className="text-[8px] bg-indigo-500/20 text-indigo-300 font-extrabold uppercase px-2 py-0.5 rounded-full border border-indigo-500/30">
+                          Active Adaptation
+                        </span>
+                      </div>
+                      <p className="text-slate-400 text-xs mt-0.5">
+                        Ajuste automatiquement les paramètres de l'oral en fonction de vos scores (Seuil de progression : ≥ 90%).
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-300 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 self-start md:self-auto flex items-center gap-1.5">
+                    <Sparkles size={11} className="text-indigo-400" />
+                    <span>Objectif B2 maintenu en cas de baisse</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
+                  {/* Dialogue Complexity */}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-between hover:bg-white/8 transition-all relative overflow-hidden">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-indigo-300 font-extrabold uppercase tracking-widest block font-display">
+                        Complexité Dialogue
+                      </span>
+                      <span className="text-base font-black text-white block capitalize">
+                        {dialogueComplexity === "standard" ? "Standard (B2)" : dialogueComplexity === "complex" ? "Haute (B2+)" : "Extrême (C1-like)"}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-1.5">
+                      <div className="flex gap-1">
+                        <div className={`w-3 h-1.5 rounded-xs ${dialogueComplexity === "standard" || dialogueComplexity === "complex" || dialogueComplexity === "highly-complex" ? "bg-indigo-500" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${dialogueComplexity === "complex" || dialogueComplexity === "highly-complex" ? "bg-indigo-400" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${dialogueComplexity === "highly-complex" ? "bg-indigo-300" : "bg-white/10"}`} />
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-mono font-bold uppercase">
+                        {dialogueComplexity === "standard" ? "Niv 1" : dialogueComplexity === "complex" ? "Niv 2" : "Niv 3"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Vocabulary Richness */}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-between hover:bg-white/8 transition-all relative overflow-hidden">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-indigo-300 font-extrabold uppercase tracking-widest block font-display">
+                        Richesse Vocabulaire
+                      </span>
+                      <span className="text-base font-black text-white block capitalize">
+                        {vocabularyLevel === "standard" ? "Standard (B2)" : vocabularyLevel === "advanced" ? "Avancé (B2+)" : "Très Avancé (C1)"}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-1.5">
+                      <div className="flex gap-1">
+                        <div className={`w-3 h-1.5 rounded-xs ${vocabularyLevel === "standard" || vocabularyLevel === "advanced" || vocabularyLevel === "highly-advanced" ? "bg-indigo-500" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${vocabularyLevel === "advanced" || vocabularyLevel === "highly-advanced" ? "bg-indigo-400" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${vocabularyLevel === "highly-advanced" ? "bg-indigo-300" : "bg-white/10"}`} />
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-mono font-bold uppercase">
+                        {vocabularyLevel === "standard" ? "Niv 1" : vocabularyLevel === "advanced" ? "Niv 2" : "Niv 3"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Implied Meaning */}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-between hover:bg-white/8 transition-all relative overflow-hidden">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-indigo-300 font-extrabold uppercase tracking-widest block font-display">
+                        Sens Implicite
+                      </span>
+                      <span className="text-base font-black text-white block capitalize">
+                        {impliedMeaningIntensity === "standard" ? "Standard (B2)" : impliedMeaningIntensity === "subtle" ? "Subtil (B2+)" : "Très Subtil (C1)"}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-1.5">
+                      <div className="flex gap-1">
+                        <div className={`w-3 h-1.5 rounded-xs ${impliedMeaningIntensity === "standard" || impliedMeaningIntensity === "subtle" || impliedMeaningIntensity === "highly-subtle" ? "bg-indigo-500" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${impliedMeaningIntensity === "subtle" || impliedMeaningIntensity === "highly-subtle" ? "bg-indigo-400" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${impliedMeaningIntensity === "highly-subtle" ? "bg-indigo-300" : "bg-white/10"}`} />
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-mono font-bold uppercase">
+                        {impliedMeaningIntensity === "standard" ? "Niv 1" : impliedMeaningIntensity === "subtle" ? "Niv 2" : "Niv 3"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Speech Speed */}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col justify-between hover:bg-white/8 transition-all relative overflow-hidden">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-indigo-300 font-extrabold uppercase tracking-widest block font-display">
+                        Vitesse de Parole
+                      </span>
+                      <span className="text-base font-black text-white block capitalize">
+                        {speechSpeedModifier === "normal" ? "Standard (1.0x)" : speechSpeedModifier === "fast" ? "Rapide (1.1x)" : "Très Rapide (1.2x)"}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-1.5">
+                      <div className="flex gap-1">
+                        <div className={`w-3 h-1.5 rounded-xs ${speechSpeedModifier === "normal" || speechSpeedModifier === "fast" || speechSpeedModifier === "very-fast" ? "bg-indigo-500" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${speechSpeedModifier === "fast" || speechSpeedModifier === "very-fast" ? "bg-indigo-400" : "bg-white/10"}`} />
+                        <div className={`w-3 h-1.5 rounded-xs ${speechSpeedModifier === "very-fast" ? "bg-indigo-300" : "bg-white/10"}`} />
+                      </div>
+                      <span className="text-[9px] text-slate-400 font-mono font-bold uppercase">
+                        {speechSpeedModifier === "normal" ? "1.0x" : speechSpeedModifier === "fast" ? "1.1x" : "1.2x"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Phase 7 Statistics Block */}
@@ -2411,7 +3659,13 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-slate-800 font-display">
-                    {quizFinished ? "Correction de l'épreuve" : "Épreuve active"} <span className="text-indigo-600 font-normal">({exercise.questions.length} questions)</span>
+                    {quizFinished ? "Correction de l'épreuve" : "Épreuve active"}{" "}
+                    {isDailyMissionSession && (
+                      <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-600 text-[11px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border border-rose-100 ml-1.5 shadow-xs align-middle">
+                        🎯 Mission du Jour
+                      </span>
+                    )}{" "}
+                    <span className="text-indigo-600 font-normal">({exercise.questions.length} questions)</span>
                   </h2>
                   <p className="text-xs text-slate-400">
                     Compréhension de l'oral • Niveau {activeDifficulty} • Section {activeQuestionType === "mixed" ? "Mixed (20-40)" : activeQuestionType}
@@ -2972,93 +4226,64 @@ export default function App() {
                         {/* Diagnostics Breakdown */}
                         <div className="border-t border-slate-100 pt-5 space-y-4">
                           <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 block font-display">
-                            Rapport Pédagogique TEF
+                            Why was this answer correct?
                           </span>
 
-                          <div className="space-y-4">
-                            {/* Correct Answer and Skill Tested */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+                          {!examMode ? (
+                            <div className="space-y-4">
+                              {/* 1. Keyword */}
+                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100/80 space-y-1">
                                 <span className="block text-[10px] font-extrabold uppercase tracking-wider text-indigo-600">
-                                  Correct Answer
+                                  Keyword
                                 </span>
-                                <span className="text-sm font-bold text-slate-800">
-                                  Option {exercise.questions[selectedFeedbackIndex].correctAnswer}
+                                <span className="text-xs font-bold text-slate-800 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg inline-block">
+                                  {exercise.questions[selectedFeedbackIndex].keyword && exercise.questions[selectedFeedbackIndex].keyword !== "None" 
+                                    ? exercise.questions[selectedFeedbackIndex].keyword 
+                                    : "Aucun mot-clé direct"}
                                 </span>
                               </div>
-                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-indigo-600">
-                                  Skill tested
-                                </span>
-                                <span className="text-sm font-bold text-slate-800">
-                                  {exercise.questions[selectedFeedbackIndex].skillTested || (selectedFeedbackIndex === 0 ? "Global understanding" : selectedFeedbackIndex === 1 ? "Detail comprehension" : selectedFeedbackIndex === 2 ? "Speaker's attitude/opinion" : selectedFeedbackIndex === 3 ? "Inference/implicit comprehension" : "Idiom & vocabulary in context")}
-                                </span>
-                              </div>
-                            </div>
 
-                            {/* Why? (Reasoning) */}
-                            {!examMode ? (
+                              {/* 2. Reasoning */}
                               <div className="p-5 bg-emerald-50/20 border border-emerald-100/80 rounded-xl space-y-1.5">
-                                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">
-                                  Why?
-                                </span>
+                                <div className="flex items-center justify-between">
+                                  <span className="block text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">
+                                    Reasoning
+                                  </span>
+                                  <span className="text-[9px] bg-emerald-100/70 text-emerald-800 font-extrabold px-2 py-0.5 rounded-md">
+                                    Listening Strategy
+                                  </span>
+                                </div>
                                 <p className="text-xs md:text-sm leading-relaxed text-slate-700">
                                   {exercise.questions[selectedFeedbackIndex].why || exercise.questions[selectedFeedbackIndex].explanation}
                                 </p>
                               </div>
-                            ) : (
-                              <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl flex items-center gap-2.5 text-slate-500 text-xs font-semibold">
-                                <Lock size={14} className="text-slate-400" />
-                                <span>Les explications de correction sont désactivées en Mode Examen officiel.</span>
-                              </div>
-                            )}
 
-                            {/* Trap */}
-                            {!examMode ? (
+                              {/* 3. Common TEF Trap */}
                               <div className="p-5 bg-amber-50/20 border border-amber-100/80 rounded-xl space-y-1.5">
                                 <span className="block text-[10px] font-extrabold uppercase tracking-wider text-amber-800">
-                                  Trap
+                                  Common TEF Trap
                                 </span>
                                 <p className="text-xs md:text-sm leading-relaxed text-slate-700 font-medium">
                                   {exercise.questions[selectedFeedbackIndex].trap || exercise.questions[selectedFeedbackIndex].commonTrap}
                                 </p>
                               </div>
-                            ) : (
-                              <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl flex items-center gap-2.5 text-slate-500 text-xs font-semibold">
-                                <Lock size={14} className="text-slate-400" />
-                                <span>Les indices de piège sont désactivés en Mode Examen officiel.</span>
-                              </div>
-                            )}
 
-                            {/* Keyword / Grammar / Vocabulary Grid */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
-                                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
-                                  Keyword
+                              {/* 4. Skill Tested */}
+                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+                                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-indigo-600">
+                                  Skill Tested
                                 </span>
-                                <span className="text-xs font-bold text-slate-800 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg inline-block">
-                                  {exercise.questions[selectedFeedbackIndex].keyword || "None"}
-                                </span>
-                              </div>
-                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
-                                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1">
-                                  Grammar <span className="text-[9px] text-red-500 lowercase normal-case">(non-évalué)</span>
-                                </span>
-                                <span className="text-xs font-bold text-slate-400 italic block">
-                                  {exercise.questions[selectedFeedbackIndex].grammar || "None"}
-                                </span>
-                              </div>
-                              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-1.5">
-                                <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
-                                  Vocabulary
-                                </span>
-                                <span className="text-xs font-bold text-slate-800 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg inline-block">
-                                  {exercise.questions[selectedFeedbackIndex].vocabulary || "None"}
+                                <span className="text-sm font-bold text-slate-800">
+                                  {formatSkillDisplay(exercise.questions[selectedFeedbackIndex].skillTested || (selectedFeedbackIndex === 0 ? "Global understanding" : selectedFeedbackIndex === 1 ? "Detail comprehension" : selectedFeedbackIndex === 2 ? "Speaker's attitude/opinion" : selectedFeedbackIndex === 3 ? "Inference/implicit comprehension" : "Idiom & vocabulary in context"))}
                                 </span>
                               </div>
                             </div>
-
-                          </div>
+                          ) : (
+                            <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-xl flex items-center gap-2.5 text-slate-500 text-xs font-semibold">
+                              <Lock size={14} className="text-slate-400" />
+                              <span>Les explications de correction sont désactivées en Mode Examen officiel.</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

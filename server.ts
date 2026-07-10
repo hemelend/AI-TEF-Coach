@@ -247,7 +247,15 @@ app.post("/api/generate", async (req, res) => {
     // Build targeted adaptive learning instructions
     let adaptivePromptSnippet = "";
     if (adaptiveContext) {
-      const { weakSkills = [], pastSessions = [] } = adaptiveContext;
+      const { 
+        weakSkills = [], 
+        pastSessions = [],
+        dialogueComplexity = "standard",
+        vocabularyLevel = "standard",
+        impliedMeaningIntensity = "standard",
+        speechSpeedModifier = "normal"
+      } = adaptiveContext;
+
       if (weakSkills.length > 0) {
         adaptivePromptSnippet += `
 ADAPTIVE LEARNING TARGET:
@@ -266,6 +274,15 @@ ${JSON.stringify(pastSessions, null, 2)}
 Ensure the context, sub-topics, arguments, and scenarios are completely new, fresh, and distinct from the above list. Never generate identical or highly similar dialogues or questions.
 `;
       }
+
+      // Add dynamic adaptive difficulty settings
+      adaptivePromptSnippet += `
+DYNAMIC ADAPTIVE DIFFICULTY INSTRUCTIONS:
+- Dialogue Complexity: ${dialogueComplexity === "highly-complex" ? "EXTREME. Sophie and Marc must engage in a deep, layered, high-turn debate with long argumentative structures and sophisticated logical clauses." : dialogueComplexity === "complex" ? "HIGH. Use longer conversational turns, sub-clauses, and a rapid, highly structured exchange of ideas." : "STANDARD B2 level sentence length and structures."}
+- Vocabulary Richness: ${vocabularyLevel === "highly-advanced" ? "EXTREME. Incorporate highly advanced idioms, abstract expressions, and professional or academic terms to test their limits." : vocabularyLevel === "advanced" ? "HIGH. Incorporate upper-intermediate French idioms, professional register, and challenging synonyms." : "STANDARD B2 vocabulary and expressions."}
+- Implied Meaning Level: ${impliedMeaningIntensity === "highly-subtle" ? "EXTREME. All critical comprehension answers must be deeply buried in subtext, intonation shifts, irony, and double negatives. Nothing should be stated directly." : impliedMeaningIntensity === "subtle" ? "HIGH. Use subtle clues, indirect opinions, and concession structures that require the student to read between the lines." : "STANDARD B2 implied meaning and direct cues."}
+- Spoken Flow Signal (Speech Speed): ${speechSpeedModifier === "very-fast" ? "EXTREMELY FAST. Write the sentences in a very natural, compact, spoken rhythm that flows without pause to simulate fast oral communication." : speechSpeedModifier === "fast" ? "FAST. Write dialogue lines with quick transition words to simulate a fast-paced conversation." : "NORMAL standard French pacing."}
+`;
     }
 
     const prompt = `You are an expert TEF Canada (Test d'Évaluation de Français) examiner and curriculum developer.
@@ -274,9 +291,9 @@ Generate an authentic French conversation at ${level} level on the topic of "${t
 ${adaptivePromptSnippet}
 
 CRITICAL INSTRUCTIONS:
-- Do NOT explain grammar in any part of the output (especially not in explanations).
-- Do NOT teach or adopt a pedagogical/instructive tone.
-- Keep all explanations strictly focused on contextual comprehension clues and facts directly stated or implied in the dialogue.
+- Do NOT explain grammar or vocabulary rules in any part of the output (especially not in explanations).
+- Keep all explanations strictly focused on oral listening strategies (e.g., how the candidate can detect the correct meaning, identifying shift in tone, spotting concession markers, or decoding oral indicators).
+- Keep the tone highly professional, precise, and supportive.
 
 The dialogue MUST be a highly authentic, natural oral French conversation featuring:
 1. Hesitations (e.g., "euh", "bah", "enfin", "tu vois", "du coup", "alors").
@@ -310,11 +327,11 @@ For each question, provide:
 - The question text in French.
 - 4 clear options in French (A, B, C, D).
 - The correct answer key (A, B, C, or D).
-- 'why': A detailed explanation in French of the reasoning/correct answer based strictly on the conversation clues. (Explain the reasoning. Remember: Do NOT explain any grammar or vocabulary rules. Focus purely on comprehension).
-- 'trap': A detailed explanation in French of what the candidate may think or get misled by (the common distraction or trap).
+- 'why' / 'explanation': A detailed explanation in French focusing purely on the oral listening strategy and comprehension clues. (Explain the reasoning/listening strategy. Remember: Do NOT explain any grammar rules).
+- 'trap' / 'commonTrap': A detailed explanation in French of what candidate may get misled by (the common distraction or trap).
 - 'keyword': A key connective, transition or word in French from the dialogue that signals the correct meaning (e.g., 'pourtant', 'néanmoins', 'cependant', 'mais'). If none, return 'None'.
-- 'grammar': Return 'None' or a brief name of a grammar element used, but keep the focus on reasoning.
-- 'vocabulary': A key vocabulary word or expression from the dialogue that helps solve the question, or 'None'.
+- 'grammar': Always return 'None'.
+- 'vocabulary': Return 'None'.
 - 'skillTested': The specific TEF comprehension skill tested. Choose EXACTLY one of: 'Implicit opinion', 'Explicit information', 'Speaker intention', 'Recommendation', 'Concession', 'Negation', 'Double negation', 'Inference', 'Purpose', 'Attitude', 'Opinion change'.`;
 
     const response = await callGeminiWithRetryAndFallback(
@@ -390,7 +407,7 @@ For each question, provide:
                       },
                       explanation: {
                         type: Type.STRING,
-                        description: "Detailed explanation in French of why this answer is correct."
+                        description: "Detailed explanation in French of why this answer is correct. Focus entirely on the oral listening strategy and how to detect the correct answer."
                       },
                       commonTrap: {
                         type: Type.STRING,
@@ -398,7 +415,7 @@ For each question, provide:
                       },
                       why: {
                         type: Type.STRING,
-                        description: "Detailed explanation in French of the reasoning/correct answer. Focus on comprehension and clues."
+                        description: "Detailed explanation in French of the reasoning/correct answer. Focus entirely on oral listening strategies."
                       },
                       trap: {
                         type: Type.STRING,
@@ -410,11 +427,11 @@ For each question, provide:
                       },
                       grammar: {
                         type: Type.STRING,
-                        description: "Return 'None' or a brief name of a grammar element used."
+                        description: "Always return 'None'."
                       },
                       vocabulary: {
                         type: Type.STRING,
-                        description: "Key vocabulary word or phrase from the dialogue, or 'None'."
+                        description: "Always return 'None'."
                       },
                       skillTested: {
                         type: Type.STRING,
@@ -462,29 +479,30 @@ app.post("/api/coach", async (req, res) => {
     const { sessionQuestions, sessionScore, skillStats, activeDifficulty } = req.body;
 
     const prompt = `You are an elite, highly encouraging, and empathetic personal TEF Canada prep coach.
-The user just completed a listening comprehension session. Analyze their performance and provide a deeply insightful, personalized, and encouraging review.
+The user just completed a listening comprehension session at level TEF ${activeDifficulty} with a score of ${sessionScore} / 5 correct answers.
+Core skills performance stats: ${JSON.stringify(skillStats)}
+Latest session questions detail: ${JSON.stringify(sessionQuestions)}
 
-Latest Session level: TEF ${activeDifficulty}
-Latest Session score: ${sessionScore} / 5 correct answers
+CRITICAL FORMATTING & CONTENT INSTRUCTIONS:
+1. You MUST generate exactly four sections in French using these EXACT markdown headers (with matching English/French context for clarity):
+### Strengths
+[Add 1-2 bullet points or extremely short sentences detailing what they excelled at in French, highlighting key terms in **bold**]
 
-Overall competency stats on core TEF hearing skills (historical accuracy):
-${JSON.stringify(skillStats, null, 2)}
+### Needs Improvement
+[Add 1-2 bullet points or extremely short sentences pointing out 1 key cognitive listening skill they struggled with in French, highlighting key terms in **bold**]
 
-Detailed breakdown of latest session questions:
-${JSON.stringify(sessionQuestions, null, 2)}
+### Today's Trap
+[Explain 1 specific trap, distractor, or audio nuance in the conversation that tripped them up in French, highlighting key terms in **bold**]
 
-CRITICAL RESPONSE GUIDELINES (ACT LIKE A WORLD-CLASS PRIVATE TUTOR):
-1. **Tone**: Warm, motivating, focused on active hearing strategies. Address the user directly in French as "tu" (personal, close, coaching relationship).
-2. **Language**: Write entirely in French.
-3. **Structure**: 
-   - Paragraph 1 (Greeting & Performance Vibe): Give immediate reaction to their score of ${sessionScore}/5 at level ${activeDifficulty}. Keep it highly specific, personal, and encouraging.
-   - Paragraph 2 (Strengths & Successes): Point out what went exceptionally well. Look at which questions they answered correctly or their strong skill groups.
-   - Paragraph 3 (Weakness & Trap Analysis): Unpack where they tripped. Focus on the actual skills of incorrect questions (e.g., changes of opinion, concessions, implicit opinions, or double negatives) in their latest session or historical trends.
-   - Paragraph 4 (Actionable Recommendation for Tomorrow): Highlight specifically how the simulator will adapt for them tomorrow (e.g. "Demain, nous ciblerons..."). Write a sentence like: "Demain, ton entraînement inclura plus de dialogues avec des concessions, des doubles négations et des conclusions implicites pour forcer ton oreille à déjouer ces pièges."
-5. **Style**: Use clean, elegant markdown formatting (bolding, headers, bullet points). Keep it tight (3-4 paragraphs maximum, around 150-250 words total) so it remains highly readable on the web panel.
-6. Avoid general or abstract grammar lectures. Keep feedback tightly coupled with oral comprehension active-listening tricks (e.g., looking out for tone changes, irony, sudden concession conjunctions).
+### Tomorrow's Focus
+[Provide a targeted action plan/focus for tomorrow's adaptive session in French, highlighting key terms in **bold**]
 
-Write the coaching message now:`;
+2. Strict Constraints:
+- Do NOT add any introduction, greeting, sign-off, or conversational preamble before or after the sections. Start directly with the first section.
+- Under each section, avoid long paragraphs; use concise, direct bullet points or single-sentence observations.
+- Keep the language encouraging yet highly professional.
+- TOTAL word count must be strictly less than 120 words. Be extremely concise. Keep it punchy, clear, and beautifully structured.
+- Highlight keywords/critical concepts in French by wrapping them in **bold**.`;
 
     const response = await callGeminiWithRetryAndFallback(
       (modelName) =>

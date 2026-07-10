@@ -619,14 +619,15 @@ app.post("/api/tts", async (req, res) => {
 
     // Mythological voices selected for clear, distinctly masculine and feminine tones
     const femaleVoices = ["Kore", "Aoede", "Leda", "Callisto", "Dione"];
-    // Charon is the most robust, warm, and deep definitive male voice
-    const maleVoices = ["Charon"];
+    // Puck is the most premium, warm, friendly and highly natural expressive male voice
+    const maleVoices = ["Puck", "Charon", "Fenrir"];
 
     let sophieVoice = "Kore";
-    let marcVoice = "Charon"; // Permanent definitive male voice for Marc
+    let marcVoice = "Puck"; // Permanent premium natural male voice for Marc to prevent robotic tones
 
     if (randomVoices) {
       sophieVoice = femaleVoices[Math.floor(Math.random() * femaleVoices.length)];
+      marcVoice = maleVoices[Math.floor(Math.random() * maleVoices.length)];
     }
 
     // Normalize speaker labels in the dialogue lines to prevent name-collision errors
@@ -683,8 +684,12 @@ app.post("/api/tts", async (req, res) => {
     const wavBuffer = pcmToWav(rawPcmBuffer, 24000, 1, 16);
     const base64Wav = wavBuffer.toString("base64");
 
+    // Calculate duration in seconds (24000 samples per second, 1 channel, 16-bit (2 bytes) per sample)
+    const durationSeconds = rawPcmBuffer.length / (24000 * 1 * (16 / 8));
+
     return res.json({
       audioUrl: `data:audio/wav;base64,${base64Wav}`,
+      duration: durationSeconds,
     });
   } catch (error: any) {
     logError("api/tts", error);

@@ -1017,14 +1017,24 @@ export default function App() {
       setIsPlaying(false);
       setCurrentTime(0);
     };
+    const handleMetadata = () => {
+      setDuration(audio.duration || 0);
+      audio.playbackRate = playbackRate;
+      audio.volume = volume;
+      audio.muted = isMuted;
+    };
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("durationchange", handleDurationChange);
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("loadedmetadata", handleMetadata);
+    audio.addEventListener("canplay", handleMetadata);
 
     audio.playbackRate = playbackRate;
+    audio.volume = volume;
+    audio.muted = isMuted;
 
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
@@ -1032,8 +1042,10 @@ export default function App() {
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("loadedmetadata", handleMetadata);
+      audio.removeEventListener("canplay", handleMetadata);
     };
-  }, [audioUrl, playbackRate]);
+  }, [audioUrl, playbackRate, volume, isMuted]);
 
   // Timer effect for elapsed time in Exam Mode
   useEffect(() => {
@@ -1309,6 +1321,9 @@ export default function App() {
       const data = await response.json();
       if (data.audioUrl) {
         setAudioUrl(data.audioUrl);
+        if (data.duration) {
+          setDuration(data.duration);
+        }
       } else {
         throw new Error("No audioUrl in response");
       }
@@ -4556,7 +4571,10 @@ export default function App() {
                         max={duration || 0}
                         value={currentTime}
                         onChange={handleSeek}
-                        className="w-full h-1 bg-zinc-800 hover:bg-zinc-700 accent-[#1db954] rounded-lg appearance-none cursor-pointer transition"
+                        className="w-full h-1.5 rounded-lg appearance-none cursor-pointer transition focus:outline-none"
+                        style={{
+                          background: `linear-gradient(to right, #1db954 0%, #1db954 ${(duration ? (currentTime / duration) * 100 : 0)}%, #27272a ${(duration ? (currentTime / duration) * 100 : 0)}%, #27272a 100%)`
+                        }}
                       />
                     </div>
 
@@ -4627,7 +4645,10 @@ export default function App() {
                         step={0.1}
                         value={isMuted ? 0 : volume}
                         onChange={handleVolumeChange}
-                        className="w-16 h-1 bg-zinc-800 accent-[#1db954] rounded-lg appearance-none cursor-pointer hover:bg-zinc-700"
+                        className="w-16 h-1.5 rounded-lg appearance-none cursor-pointer transition focus:outline-none"
+                        style={{
+                          background: `linear-gradient(to right, #1db954 0%, #1db954 ${(isMuted ? 0 : volume) * 100}%, #27272a ${(isMuted ? 0 : volume) * 100}%, #27272a 100%)`
+                        }}
                       />
                     </div>
                   </div>

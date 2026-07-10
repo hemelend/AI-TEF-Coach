@@ -177,8 +177,8 @@ async function callGeminiTtsWithRetry(
 }
 
 
-// Endpoint: Generate TEF Canada listening exercise (conversation + questions)
-app.post("/api/generate", async (req, res) => {
+// Endpoint: AI Conversation Generator (Module 1)
+app.post("/api/generate-conversation", async (req, res) => {
   try {
     if (!process.env.GEMINI_API_KEY) {
       return res.status(400).json({
@@ -215,7 +215,7 @@ app.post("/api/generate", async (req, res) => {
 
     const durationVal = [60, 90, 120].includes(Number(durationSec)) ? Number(durationSec) : 90;
 
-    console.log(`Generating ${level} French TEF Canada exercise for topic: ${topic}, type: ${qType}, duration: ${durationVal}s`);
+    console.log(`[AI Conversation Generator] Generating ${level} French TEF Canada dialogue for topic: ${topic}, type: ${qType}, duration: ${durationVal}s`);
 
     let levelDescription = "";
     if (level === "B1") {
@@ -228,11 +228,11 @@ app.post("/api/generate", async (req, res) => {
 
     let typeDescription = "";
     if (qType === "20-30") {
-      typeDescription = "Mimic the TEF Canada Section B/C (Questions 20-30) style: The exchange or messages are relatively brief, concise, and focused on public situations, short voicemails, public announcements, street polls (sondages), or brief news flashes. The questions should test identifying the communicative context, direct intentions, public settings, or immediate opinions.";
+      typeDescription = "Mimic the TEF Canada Section B/C (Questions 20-30) style: The exchange or messages are relatively brief, concise, and focused on public situations, short voicemails, public announcements, street polls (sondages), or brief news flashes.";
     } else if (qType === "35-40") {
-      typeDescription = "Mimic the TEF Canada Section D (Questions 35-40) style: This must be a deep, elaborate, and analytical conversation, interview, or debate between Sophie and Marc. The discussion should focus on detailed arguments, abstract reasoning, and subtle speaker positions. The questions should test complex details, speaker's underlying attitudes/feelings, advanced logical inferences, and high-level figures of speech.";
+      typeDescription = "Mimic the TEF Canada Section D (Questions 35-40) style: This must be a deep, elaborate, and analytical conversation, interview, or debate between Sophie and Marc. The discussion should focus on detailed arguments, abstract reasoning, and subtle speaker positions.";
     } else {
-      typeDescription = "A mixed comprehensive style: A solid conversational debate or exchange incorporating both general contextual questions and detailed analytical assessments (global understanding, specific details, attitudes, logical inferences, and idioms).";
+      typeDescription = "A mixed comprehensive style: A solid conversational debate or exchange incorporating both general contextual discussion and detailed analytical arguments.";
     }
 
     let lengthDescription = "";
@@ -260,22 +260,19 @@ app.post("/api/generate", async (req, res) => {
         adaptivePromptSnippet += `
 ADAPTIVE LEARNING TARGET:
 The student is currently struggling with these cognitive listening sub-skills: ${weakSkills.join(", ")}.
-You MUST design the dialogue and the 5 questions to specifically train and test these weaknesses:
+You MUST design the dialogue to specifically train these weaknesses:
 - Ensure the dialogue features multiple occurrences of these patterns (e.g., if 'Double negatives' is weak, include multiple double negatives like "Je ne dis pas que ce n'est pas..."; if 'Concession' is weak, include multiple concession structures; etc.).
-- Dedicate at least 2 of the 5 questions directly to testing these specific weak skills.
 `;
       }
       if (pastSessions.length > 0) {
-        // Avoid duplicates or highly similar scenarios
         adaptivePromptSnippet += `
 PREVENT DUPLICATION (NEVER GENERATE IDENTICAL SESSIONS):
-Do NOT generate a dialogue, scenario, sub-topic, or questions similar to any of these previous sessions:
+Do NOT generate a dialogue, scenario, sub-topic, or arguments similar to any of these previous sessions:
 ${JSON.stringify(pastSessions, null, 2)}
-Ensure the context, sub-topics, arguments, and scenarios are completely new, fresh, and distinct from the above list. Never generate identical or highly similar dialogues or questions.
+Ensure the context, sub-topics, arguments, and scenarios are completely new, fresh, and distinct from the above list. Never generate identical or highly similar dialogues.
 `;
       }
 
-      // Add dynamic adaptive difficulty settings
       adaptivePromptSnippet += `
 DYNAMIC ADAPTIVE DIFFICULTY INSTRUCTIONS:
 - Dialogue Complexity: ${dialogueComplexity === "highly-complex" ? "EXTREME. Sophie and Marc must engage in a deep, layered, high-turn debate with long argumentative structures and sophisticated logical clauses." : dialogueComplexity === "complex" ? "HIGH. Use longer conversational turns, sub-clauses, and a rapid, highly structured exchange of ideas." : "STANDARD B2 level sentence length and structures."}
@@ -286,14 +283,9 @@ DYNAMIC ADAPTIVE DIFFICULTY INSTRUCTIONS:
     }
 
     const prompt = `You are an expert TEF Canada (Test d'Évaluation de Français) examiner and curriculum developer.
-Generate an authentic French conversation at ${level} level on the topic of "${topic}" matching the requested question category style, designed to resemble questions 20 to 40 of the TEF Canada listening comprehension exam.
+Generate an authentic French conversation (dialogue ONLY) at ${level} level on the topic of "${topic}" matching the requested question category style, designed to resemble questions 20 to 40 of the TEF Canada listening comprehension exam.
 
 ${adaptivePromptSnippet}
-
-CRITICAL INSTRUCTIONS:
-- Do NOT explain grammar or vocabulary rules in any part of the output (especially not in explanations).
-- Keep all explanations strictly focused on oral listening strategies (e.g., how the candidate can detect the correct meaning, identifying shift in tone, spotting concession markers, or decoding oral indicators).
-- Keep the tone highly professional, precise, and supportive.
 
 The dialogue MUST be a highly authentic, natural oral French conversation featuring:
 1. Hesitations (e.g., "euh", "bah", "enfin", "tu vois", "du coup", "alors").
@@ -313,26 +305,9 @@ The dialogue MUST follow these rules:
 5. ${typeDescription}
 6. Provide the dialogue in a "dialogue" JSON array of lines, where each line has "speaker", "voice" ("female" for Sophie, "male" for Marc), and "text" fields.
 7. Explicitly set the "duration" field to ${durationVal} in the root of the JSON.
-
-Along with the conversation, generate EXACTLY 5 high-quality TEF Canada listening multiple-choice questions (comprehension orale) in French that reflect this chosen category:
-Each question must have options A, B, C, and D, with ONLY ONE correct answer.
-Each question must check a different comprehension level appropriate to the ${qType} section:
-- Question 1: Global understanding (context, environment, or main goal of the exchange).
-- Question 2: Detail comprehension (specific argument or facts mentioned).
-- Question 3: Speaker's attitude/opinion/feelings/nuance.
-- Question 4: Inference/implicit comprehension (what is implied or can be logically deduced).
-- Question 5: Specific ${level} level idiom, vocabulary, or expression used in context.
-
-For each question, provide:
-- The question text in French.
-- 4 clear options in French (A, B, C, D).
-- The correct answer key (A, B, C, or D).
-- 'why' / 'explanation': A detailed explanation in French focusing purely on the oral listening strategy and comprehension clues. (Explain the reasoning/listening strategy. Remember: Do NOT explain any grammar rules).
-- 'trap' / 'commonTrap': A detailed explanation in French of what candidate may get misled by (the common distraction or trap).
-- 'keyword': A key connective, transition or word in French from the dialogue that signals the correct meaning (e.g., 'pourtant', 'néanmoins', 'cependant', 'mais'). If none, return 'None'.
-- 'grammar': Always return 'None'.
-- 'vocabulary': Return 'None'.
-- 'skillTested': The specific TEF comprehension skill tested. Choose EXACTLY one of: 'Implicit opinion', 'Explicit information', 'Speaker intention', 'Recommendation', 'Concession', 'Negation', 'Double negation', 'Inference', 'Purpose', 'Attitude', 'Opinion change'.`;
+8. Provide a short, concise 1-sentence description of the conversation theme in French in "subTopic" field.
+9. Provide "transcript": The full text transcript of the entire conversation as a single cohesive string, listing speakers and dialogue turns.
+10. Return "topic": The selected topic string.`;
 
     const response = await callGeminiWithRetryAndFallback(
       (modelName) =>
@@ -340,7 +315,7 @@ For each question, provide:
           model: modelName,
           contents: prompt,
           config: {
-            systemInstruction: "You are a professional TEF Canada test creation system. Return output strictly in JSON according to the requested schema.",
+            systemInstruction: "You are a professional TEF Canada test creation system. Generate the conversation/dialogue strictly in JSON according to the requested schema.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -379,6 +354,110 @@ For each question, provide:
                     required: ["speaker", "voice", "text"]
                   }
                 },
+                transcript: {
+                  type: Type.STRING,
+                  description: "The full text transcript of the entire conversation as a single cohesive string, listing speakers and dialogue turns."
+                }
+              },
+              required: ["topic", "duration", "dialogue", "transcript", "subTopic"]
+            }
+          }
+        }),
+      "gemini-3.5-flash",
+      "gemini-3.1-flash-lite"
+    );
+
+    const resultText = response.text;
+    if (!resultText) {
+      throw new Error("Empty response received from Gemini.");
+    }
+
+    const data = JSON.parse(resultText.trim());
+    return res.json(data);
+  } catch (error: any) {
+    logError("api/generate-conversation", error);
+    return res.status(500).json({ error: error.message || "Failed to generate TEF conversation." });
+  }
+});
+
+// Endpoint: AI Question Generator (Module 2)
+app.post("/api/generate-questions", async (req, res) => {
+  try {
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(400).json({
+        error: "GEMINI_API_KEY is not configured. Please add it to Settings > Secrets.",
+      });
+    }
+
+    const { dialogue, transcript, topic, subTopic, difficulty = "B2", questionType = "mixed", adaptiveContext } = req.body;
+    
+    if (!transcript || !dialogue) {
+      return res.status(400).json({ error: "Missing required dialogue or transcript." });
+    }
+
+    const level = ["B1", "B2", "C1"].includes(difficulty) ? difficulty : "B2";
+    const qType = ["20-30", "35-40", "mixed"].includes(questionType) ? questionType : "mixed";
+
+    console.log(`[AI Question Generator] Generating 5 questions for ${level} level, type: ${qType} based on dialogue transcript.`);
+
+    let adaptivePromptSnippet = "";
+    if (adaptiveContext && adaptiveContext.weakSkills && adaptiveContext.weakSkills.length > 0) {
+      adaptivePromptSnippet += `
+ADAPTIVE LEARNING TARGET:
+The student is currently struggling with these cognitive listening sub-skills: ${adaptiveContext.weakSkills.join(", ")}.
+You MUST design the 5 questions to specifically test these weaknesses:
+- Dedicate at least 2 of the 5 questions directly to testing these specific weak skills.
+`;
+    }
+
+    const prompt = `You are an expert TEF Canada (Test d'Évaluation de Français) examiner and curriculum developer.
+Generate EXACTLY 5 high-quality TEF Canada listening multiple-choice questions (comprehension orale) in French based ON THE PROVIDED DIALOGUE AND TRANSCRIPT.
+
+CONVERSATION TOPIC: ${topic}
+CONVERSATION SUB-TOPIC: ${subTopic}
+
+CONVERSATION TRANSCRIPT:
+"""
+${transcript}
+"""
+
+${adaptivePromptSnippet}
+
+CRITICAL INSTRUCTIONS:
+- Do NOT explain grammar or vocabulary rules in any part of the output (especially not in explanations).
+- Keep all explanations strictly focused on oral listening strategies (e.g., how the candidate can detect the correct meaning, identifying shift in tone, spotting concession markers, or decoding oral indicators).
+- Keep the tone highly professional, precise, and supportive.
+
+Each question must have options A, B, C, and D, with ONLY ONE correct answer.
+Each question must check a different comprehension level appropriate to the ${qType} section:
+- Question 1: Global understanding (context, environment, or main goal of the exchange).
+- Question 2: Detail comprehension (specific argument or facts mentioned).
+- Question 3: Speaker's attitude/opinion/feelings/nuance.
+- Question 4: Inference/implicit comprehension (what is implied or can be logically deduced).
+- Question 5: Specific ${level} level idiom, vocabulary, or expression used in context.
+
+For each question, provide:
+- The question text in French.
+- 4 clear options in French (A, B, C, D).
+- The correct answer key (A, B, C, or D).
+- 'why' / 'explanation': A detailed explanation in French focusing purely on the oral listening strategy and comprehension clues. (Explain the reasoning/listening strategy. Remember: Do NOT explain any grammar rules).
+- 'trap' / 'commonTrap': A detailed explanation in French of what candidate may get misled by (the common distraction or trap).
+- 'keyword': A key connective, transition or word in French from the dialogue that signals the correct meaning (e.g., 'pourtant', 'néanmoins', 'cependant', 'mais'). If none, return 'None'.
+- 'grammar': Always return 'None'.
+- 'vocabulary': Return 'None'.
+- 'skillTested': The specific TEF comprehension skill tested. Choose EXACTLY one of: 'Implicit opinion', 'Explicit information', 'Speaker intention', 'Recommendation', 'Concession', 'Negation', 'Double negation', 'Inference', 'Purpose', 'Attitude', 'Opinion change'.`;
+
+    const response = await callGeminiWithRetryAndFallback(
+      (modelName) =>
+        ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction: "You are a professional TEF Canada question creation system. Generate the questions strictly in JSON according to the requested schema.",
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
                 questions: {
                   type: Type.ARRAY,
                   description: "Exactly 5 TEF Canada multiple-choice questions based on the dialogue.",
@@ -440,13 +519,9 @@ For each question, provide:
                     },
                     required: ["id", "questionText", "options", "correctAnswer", "explanation", "commonTrap", "why", "trap", "keyword", "grammar", "vocabulary", "skillTested"]
                   }
-                },
-                transcript: {
-                  type: Type.STRING,
-                  description: "The full text transcript of the entire conversation as a single cohesive string, listing speakers and dialogue turns."
                 }
               },
-              required: ["topic", "duration", "dialogue", "questions", "transcript", "subTopic"]
+              required: ["questions"]
             }
           }
         }),
@@ -462,8 +537,8 @@ For each question, provide:
     const data = JSON.parse(resultText.trim());
     return res.json(data);
   } catch (error: any) {
-    logError("api/generate", error);
-    return res.status(500).json({ error: error.message || "Failed to generate TEF conversation and questions." });
+    logError("api/generate-questions", error);
+    return res.status(500).json({ error: error.message || "Failed to generate TEF questions." });
   }
 });
 

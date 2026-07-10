@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useRef, ChangeEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
+  ResponsiveContainer,
+  LineChart as RechartsLineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  CartesianGrid,
+  ReferenceLine,
+  BarChart as RechartsBarChart,
+  Bar,
+  Cell as RechartsCell
+} from "recharts";
+import {
   Play,
   Pause,
   RotateCcw,
@@ -35,6 +48,8 @@ import {
   Cpu,
   History,
   Brain,
+  TrendingUp,
+  LineChart,
 } from "lucide-react";
 
 // Types
@@ -533,7 +548,7 @@ const getDailyMission = () => {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"practice" | "history">("practice");
+  const [activeTab, setActiveTab] = useState<"practice" | "history" | "predictions">("practice");
   const [activeHistoryDetail, setActiveHistoryDetail] = useState<AdaptiveHistoryEntry | null>(null);
   const [activeHistoryTab, setActiveHistoryTab] = useState<"questions" | "transcript" | "ai_coach">("questions");
   const [requestingAICoachForHistoric, setRequestingAICoachForHistoric] = useState<string | null>(null);
@@ -547,6 +562,7 @@ export default function App() {
   const [durationSec, setDurationSec] = useState<60 | 90 | 120>(90);
   const [activeDurationSec, setActiveDurationSec] = useState<number>(90);
   const [loading, setLoading] = useState<boolean>(false);
+  const [generationStep, setGenerationStep] = useState<"conversation" | "questions" | "audio" | "idle">("idle");
   const [loadingTipIndex, setLoadingTipIndex] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [isDailyMissionSession, setIsDailyMissionSession] = useState<boolean>(false);
@@ -1197,7 +1213,9 @@ export default function App() {
     setPlaybackRate(speedRate);
 
     try {
-      const response = await fetch("/api/generate", {
+      // Step 1: AI Conversation Generator (Module 1)
+      setGenerationStep("conversation");
+      const convResponse = await fetch("/api/generate-conversation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1209,12 +1227,46 @@ export default function App() {
         }),
       });
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Une erreur est survenue lors de la communication avec le serveur.");
+      if (!convResponse.ok) {
+        const errData = await convResponse.json();
+        throw new Error(errData.error || "Une erreur est survenue lors de la génération de la conversation.");
       }
 
-      const data: TEFExercise = await response.json();
+      const convData = await convResponse.json();
+
+      // Step 2: AI Question Generator (Module 2)
+      setGenerationStep("questions");
+      const qResponse = await fetch("/api/generate-questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dialogue: convData.dialogue,
+          transcript: convData.transcript,
+          topic: convData.topic,
+          subTopic: convData.subTopic,
+          difficulty: actualDifficulty,
+          questionType: actualQuestionType === "mixed" ? "adaptive" : actualQuestionType,
+          adaptiveContext
+        }),
+      });
+
+      if (!qResponse.ok) {
+        const errData = await qResponse.json();
+        throw new Error(errData.error || "Une erreur est survenue lors de la génération des questions de l'examen.");
+      }
+
+      const qData = await qResponse.json();
+
+      // Merge results into standard TEFExercise format (Module 3 Scoring Engine will consume this)
+      const data: TEFExercise = {
+        topic: convData.topic,
+        subTopic: convData.subTopic,
+        duration: convData.duration,
+        dialogue: convData.dialogue,
+        transcript: convData.transcript,
+        questions: qData.questions
+      };
+
       setExercise(data);
       setActiveDifficulty(actualDifficulty);
       setActiveQuestionType(actualQuestionType);
@@ -1227,13 +1279,15 @@ export default function App() {
         localStorage.setItem("tef_total_sessions", nextSessionsCount.toString());
       }
 
-      // Instantly generate the speech for the conversation
+      // Step 3: AI Voice Synthesis (Audio generation)
+      setGenerationStep("audio");
       await generateTTS(data.dialogue, actualDifficulty);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Impossible de générer l'entraînement. Veuillez réessayer.");
     } finally {
       setLoading(false);
+      setGenerationStep("idle");
     }
   };
 
@@ -2318,6 +2372,693 @@ export default function App() {
     );
   };
 
+  const calculatePredictiveStats = (history: AdaptiveHistoryEntry[], currentSkillStats: { [key: string]: { correct: number; total: number } }) => {
+    const last20 = [...history]
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .slice(-20);
+
+    const numSessions = last20.length;
+
+    if (numSessions === 0) {
+      return {
+        currentProbability: 45,
+        targetProbability: 85,
+        confidenceLevel: "Moyenne" as "Faible" | "Moyenne" | "Élevée",
+        confidencePercent: 55,
+        estimatedSessionsRemaining: 12,
+        recommendedWeeklyStudyTime: "4h à 6h par semaine",
+        trendDirection: "stable" as "up" | "down" | "stable",
+        trendValue: 0,
+        consistency: "Moyenne",
+        cognitiveMastery: 60,
+        questionTypeMastery: {
+          "20-30": 65,
+          "35-40": 55,
+          "mixed": 60,
+        },
+        sessionsList: [],
+      };
+    }
+
+    const tefScores = last20.map(s => {
+      if (s.estimatedTefScore) return s.estimatedTefScore;
+      return getSessionTEFScore(s.score);
+    });
+
+    const avgTefScore = tefScores.reduce((sum, score) => sum + score, 0) / numSessions;
+
+    let trendDirection: "up" | "down" | "stable" = "stable";
+    let trendValue = 0;
+    if (numSessions >= 2) {
+      const half = Math.floor(numSessions / 2);
+      const firstHalf = tefScores.slice(0, half);
+      const secondHalf = tefScores.slice(half);
+      const avgFirst = firstHalf.reduce((s, x) => s + x, 0) / firstHalf.length;
+      const avgSecond = secondHalf.reduce((s, x) => s + x, 0) / secondHalf.length;
+      
+      trendValue = Math.round(avgSecond - avgFirst);
+      if (trendValue > 15) {
+        trendDirection = "up";
+      } else if (trendValue < -15) {
+        trendDirection = "down";
+      } else {
+        trendDirection = "stable";
+      }
+    }
+
+    let consistency: "Très élevée" | "Élevée" | "Moyenne" | "Variable" = "Moyenne";
+    let standardDeviation = 0;
+    if (numSessions >= 2) {
+      const mean = avgTefScore;
+      const variance = tefScores.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) / numSessions;
+      standardDeviation = Math.sqrt(variance);
+
+      if (standardDeviation < 30) {
+        consistency = "Très élevée";
+      } else if (standardDeviation < 60) {
+        consistency = "Élevée";
+      } else if (standardDeviation < 100) {
+        consistency = "Moyenne";
+      } else {
+        consistency = "Variable";
+      }
+    }
+
+    const skillValues = Object.values(currentSkillStats);
+    const cognitiveMastery = skillValues.length > 0
+      ? Math.round((skillValues.reduce((sum, s) => sum + (s.correct / s.total), 0) / skillValues.length) * 100)
+      : 65;
+
+    const qtStats: { [key: string]: { correct: number; total: number } } = {
+      "20-30": { correct: 0, total: 0 },
+      "35-40": { correct: 0, total: 0 },
+      "mixed": { correct: 0, total: 0 },
+    };
+
+    last20.forEach(s => {
+      const qt = s.questionType || "mixed";
+      if (qtStats[qt]) {
+        qtStats[qt].correct += s.score;
+        qtStats[qt].total += s.total;
+      }
+    });
+
+    const questionTypeMastery: { [key: string]: number } = {};
+    Object.entries(qtStats).forEach(([type, stat]) => {
+      questionTypeMastery[type] = stat.total > 0
+        ? Math.round((stat.correct / stat.total) * 100)
+        : (type === "20-30" ? 70 : type === "35-40" ? 55 : 62);
+    });
+
+    let baseProb = 1 / (1 + Math.exp(-(avgTefScore - 380) / 45));
+    let currentProbability = Math.round(baseProb * 100);
+
+    if (trendDirection === "up") {
+      currentProbability += 8;
+    } else if (trendDirection === "down") {
+      currentProbability -= 8;
+    }
+
+    if (cognitiveMastery > 75) {
+      currentProbability += 5;
+    } else if (cognitiveMastery < 50) {
+      currentProbability -= 8;
+    }
+
+    if (consistency === "Variable") {
+      currentProbability -= 5;
+    } else if (consistency === "Très élevée" && avgTefScore >= 400) {
+      currentProbability += 4;
+    }
+
+    currentProbability = Math.max(5, Math.min(98, currentProbability));
+
+    let confidencePercent = 30;
+    if (numSessions >= 15) confidencePercent = 85;
+    else if (numSessions >= 10) confidencePercent = 75;
+    else if (numSessions >= 5) confidencePercent = 60;
+    else if (numSessions >= 3) confidencePercent = 45;
+
+    if (consistency === "Très élevée" || consistency === "Élevée") {
+      confidencePercent += 10;
+    } else if (consistency === "Variable") {
+      confidencePercent -= 15;
+    }
+    confidencePercent = Math.max(10, Math.min(95, confidencePercent));
+
+    let confidenceLevel: "Faible" | "Moyenne" | "Élevée" = "Moyenne";
+    if (confidencePercent < 45) {
+      confidenceLevel = "Faible";
+    } else if (confidencePercent > 75) {
+      confidenceLevel = "Élevée";
+    }
+
+    const targetProbability = 85;
+    let estimatedSessionsRemaining = 0;
+    if (currentProbability < targetProbability) {
+      let progressRatePerSession = 3.0;
+      if (trendDirection === "up") progressRatePerSession = 4.5;
+      if (trendDirection === "down") progressRatePerSession = 1.5;
+
+      estimatedSessionsRemaining = Math.max(1, Math.round((targetProbability - currentProbability) / progressRatePerSession));
+    }
+
+    let recommendedWeeklyStudyTime = "4h à 6h par semaine";
+    if (currentProbability >= 85) {
+      recommendedWeeklyStudyTime = "2h à 3h par semaine (Maintien)";
+    } else if (currentProbability >= 65) {
+      recommendedWeeklyStudyTime = "3h à 5h par semaine (Consolidation)";
+    } else if (currentProbability >= 45) {
+      recommendedWeeklyStudyTime = "5h à 7h par semaine (Entraînement régulier)";
+    } else {
+      recommendedWeeklyStudyTime = "7h à 10h par semaine (Plan Intensif)";
+    }
+
+    const sessionsList = last20.map((s, idx) => ({
+      index: idx + 1,
+      name: `S${idx + 1}`,
+      score: s.score,
+      total: s.total,
+      tefScore: s.estimatedTefScore || getSessionTEFScore(s.score),
+      topic: s.dialogueTopicSummary || s.topic,
+      difficulty: s.difficulty,
+    }));
+
+    return {
+      currentProbability,
+      targetProbability,
+      confidenceLevel,
+      confidencePercent,
+      estimatedSessionsRemaining,
+      recommendedWeeklyStudyTime,
+      trendDirection,
+      trendValue,
+      consistency,
+      cognitiveMastery,
+      questionTypeMastery,
+      sessionsList,
+    };
+  };
+
+  const renderPredictionsPage = () => {
+    const stats = calculatePredictiveStats(adaptiveHistory, skillStats);
+
+    const isPerfectTrend = stats.trendDirection === "up";
+    const isStableTrend = stats.trendDirection === "stable";
+
+    return (
+      <div className="max-w-6xl mx-auto space-y-6 w-full py-4 font-sans text-slate-800" id="predictive-dashboard-container">
+        {/* Header Title & Intro Banner */}
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-200 pb-5" id="predictive-header">
+          <div className="text-left">
+            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight font-display flex items-center gap-2" id="predictive-title">
+              <TrendingUp className="text-indigo-600 animate-pulse" size={24} />
+              Tableau de Bord Prédictif de Réussite (TEF B2)
+            </h2>
+            <p className="text-slate-500 text-sm mt-1" id="predictive-subtitle">
+              Analyse prédictive de votre probabilité d'atteindre le niveau **B2 (400+ points)** à l'épreuve de Compréhension Orale du TEF.
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-2 text-xs bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl font-medium text-slate-500" id="sessions-count-badge">
+            <span>Données analysées : </span>
+            <span className="font-extrabold text-indigo-600">{Math.min(20, adaptiveHistory.length)} dernières sessions</span>
+          </div>
+        </div>
+
+        {/* PRIMARY METRICS BENTO GRID */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" id="primary-metrics-grid">
+          {/* Gauge Widget: Current Success Probability */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs flex flex-col items-center justify-between relative overflow-hidden" id="gauge-probability-card">
+            <div className="absolute right-0 top-0 w-24 h-24 bg-indigo-50/15 rounded-bl-full pointer-events-none" />
+            
+            <div className="text-center w-full">
+              <div className="flex items-center justify-center gap-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600">
+                  Probabilité Actuelle B2
+                </span>
+                <div className="group relative">
+                  <HelpCircle size={12} className="text-slate-400 cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 p-2 bg-slate-900 text-white text-[10px] rounded-lg opacity-0 pointer-events-none group-hover:opacity-100 transition z-50 shadow-lg leading-relaxed">
+                    Probabilité estimée d'obtenir au moins 400 points (B2) sur la base de vos sessions et de vos acquis.
+                  </div>
+                </div>
+              </div>
+              
+              <h3 className="text-xs text-slate-400 font-medium mt-0.5">
+                Objectif de préparation : {stats.targetProbability}%
+              </h3>
+            </div>
+
+            {/* Visual Circular Meter */}
+            <div className="relative w-44 h-44 flex items-center justify-center my-6" id="probability-radial-container">
+              {/* SVG Background and progress ring */}
+              <svg className="w-full h-full transform -rotate-90">
+                <circle
+                  cx="88"
+                  cy="88"
+                  r="74"
+                  stroke="#f1f5f9"
+                  strokeWidth="12"
+                  fill="transparent"
+                />
+                <circle
+                  cx="88"
+                  cy="88"
+                  r="74"
+                  stroke="url(#probability-gradient)"
+                  strokeWidth="12"
+                  fill="transparent"
+                  strokeDasharray={464}
+                  strokeDashoffset={464 - (464 * stats.currentProbability) / 100}
+                  strokeLinecap="round"
+                  className="transition-all duration-1000 ease-out"
+                />
+                <defs>
+                  <linearGradient id="probability-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#6366f1" />
+                    <stop offset="100%" stopColor="#4f46e5" />
+                  </linearGradient>
+                </defs>
+              </svg>
+              
+              <div className="absolute flex flex-col items-center justify-center text-center">
+                <span className="text-4xl font-black text-slate-900 font-display">
+                  {stats.currentProbability}%
+                </span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full mt-1 ${
+                  stats.currentProbability >= 85 
+                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
+                    : stats.currentProbability >= 65 
+                    ? "bg-indigo-50 text-indigo-700 border border-indigo-200" 
+                    : "bg-amber-50 text-amber-700 border border-amber-200"
+                }`}>
+                  {stats.currentProbability >= 85 ? "Prêt (B2+)" : stats.currentProbability >= 65 ? "En bonne voie" : "En progression"}
+                </span>
+              </div>
+            </div>
+
+            {/* Target Comparison Bar */}
+            <div className="w-full space-y-1.5" id="probability-progress-bar-container">
+              <div className="flex justify-between text-[11px] font-bold text-slate-400">
+                <span>0%</span>
+                <span className="text-indigo-600 font-extrabold">Cible : {stats.targetProbability}%</span>
+                <span>100%</span>
+              </div>
+              <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50 relative">
+                <div
+                  className="h-full bg-indigo-600 rounded-full transition-all duration-1000"
+                  style={{ width: `${stats.currentProbability}%` }}
+                />
+                {/* Target marker */}
+                <div
+                  className="absolute top-0 bottom-0 w-1 bg-rose-500"
+                  style={{ left: `${stats.targetProbability}%` }}
+                  title="Seuil de réussite cible"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Sessions Remaining Widget */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs flex flex-col justify-between relative overflow-hidden" id="sessions-remaining-card">
+            <div className="absolute right-0 top-0 w-24 h-24 bg-indigo-50/15 rounded-bl-full pointer-events-none" />
+            
+            <div className="space-y-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600">
+                Préparation Estimée
+              </span>
+              <h3 className="text-xs text-slate-400 font-medium">
+                Sessions d'entraînement requises pour atteindre la cible
+              </h3>
+            </div>
+
+            <div className="my-8 text-center" id="sessions-counter-display">
+              {stats.currentProbability >= stats.targetProbability ? (
+                <div className="space-y-2">
+                  <div className="w-14 h-14 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center mx-auto text-2xl shadow-3xs">
+                    ✓
+                  </div>
+                  <h4 className="text-lg font-black text-emerald-700">Aptitudes Validées !</h4>
+                  <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
+                    Votre probabilité actuelle dépasse le seuil de sécurité de {stats.targetProbability}%. Continuez ainsi pour maintenir vos acquis.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <span className="text-5xl font-black text-slate-900 font-display block">
+                    {stats.estimatedSessionsRemaining}
+                  </span>
+                  <span className="text-xs font-extrabold uppercase tracking-widest text-slate-400 block">
+                    sessions estimées
+                  </span>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mt-2.5 max-w-xs mx-auto">
+                    Nombre estimé de simulations TEF adaptatives à réaliser pour consolider vos compétences critiques et lever les doutes.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 bg-indigo-50/45 border border-indigo-100/60 rounded-xl space-y-1" id="sessions-study-tip">
+              <span className="text-[10px] uppercase font-black tracking-wider text-indigo-700 block">
+                Cible d'entraînement
+              </span>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Priorisez les sessions de type **{stats.currentProbability < 65 ? "Section 20-30" : "Section Mixed"}** à difficulté **{stats.currentProbability < 70 ? "B2" : "C1"}** pour maximiser vos points d'impact.
+              </p>
+            </div>
+          </div>
+
+          {/* Recommended Study Time Widget */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs flex flex-col justify-between relative overflow-hidden" id="study-time-card">
+            <div className="absolute right-0 top-0 w-24 h-24 bg-indigo-50/15 rounded-bl-full pointer-events-none" />
+            
+            <div className="space-y-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600">
+                Temps d'Étude Hebdomadaire
+              </span>
+              <h3 className="text-xs text-slate-400 font-medium">
+                Recommandé par notre algorithme adaptatif
+              </h3>
+            </div>
+
+            <div className="my-6 text-center" id="study-time-display">
+              <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-center mx-auto mb-3 shadow-3xs text-xl">
+                ⏳
+              </div>
+              <h4 className="text-xl font-black text-slate-950 font-display">
+                {stats.recommendedWeeklyStudyTime}
+              </h4>
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mt-1">
+                Plan de travail hebdomadaire conseillé
+              </span>
+            </div>
+
+            <div className="border-t border-slate-100 pt-3 space-y-2 text-left" id="weekly-distribution-plan">
+              <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400 block">
+                Répartition recommandée
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="bg-slate-50 border border-slate-100 p-2 rounded-lg">
+                  <span className="font-extrabold text-indigo-600 block">60% Écoute</span>
+                  <span className="text-slate-500 text-[10px]">Analyse de scripts oraux</span>
+                </div>
+                <div className="bg-slate-50 border border-slate-100 p-2 rounded-lg">
+                  <span className="font-extrabold text-indigo-600 block">40% Quiz</span>
+                  <span className="text-slate-500 text-[10px]">Épreuves chronométrées</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* TREND & CONFIDENCE ROW */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="trend-confidence-row">
+          {/* Trend Chart Card (2 cols wide on large screens) */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs lg:col-span-2 flex flex-col justify-between text-left" id="trend-chart-card">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
+              <div>
+                <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-900 font-display flex items-center gap-2">
+                  <LineChart size={16} className="text-indigo-600" />
+                  Progression du Score Estimé TEF
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Évolution de l'équivalent de vos points TEF (0-699) sur les 20 dernières sessions.
+                </p>
+              </div>
+
+              {/* Trend Badge */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-slate-400 font-semibold">Tendance :</span>
+                {isPerfectTrend ? (
+                  <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                    ↗ Positive (+{stats.trendValue} pts)
+                  </span>
+                ) : isStableTrend ? (
+                  <span className="text-xs font-extrabold text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                    → Stable
+                  </span>
+                ) : (
+                  <span className="text-xs font-extrabold text-amber-700 bg-amber-50 border border-amber-100 px-2.5 py-1 rounded-lg flex items-center gap-1">
+                    ↘ Volatile ({stats.trendValue} pts)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Recharts Line Chart */}
+            <div className="h-64 w-full" id="recharts-line-chart-container">
+              {stats.sessionsList.length === 0 ? (
+                <div className="h-full w-full flex items-center justify-center bg-slate-50 border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 font-medium">
+                  Aucune donnée de session disponible pour générer la courbe de tendance.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsLineChart
+                    data={stats.sessionsList}
+                    margin={{ top: 15, right: 10, left: -20, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis
+                      dataKey="name"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }}
+                    />
+                    <YAxis
+                      domain={[150, 699]}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 'bold' }}
+                    />
+                    <RechartsTooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-slate-900 text-white p-3 rounded-xl border border-slate-800 shadow-xl text-left text-xs space-y-1">
+                              <p className="font-extrabold text-indigo-300">{data.topic}</p>
+                              <p className="font-medium text-slate-300">Difficulté : {data.difficulty}</p>
+                              <p className="font-semibold">Score : {data.score}/{data.total} correct</p>
+                              <p className="font-black text-indigo-400">Score TEF Est. : {data.tefScore} pts</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    {/* B2 Threshold Line at 400 */}
+                    <ReferenceLine
+                      y={400}
+                      stroke="#f43f5e"
+                      strokeDasharray="4 4"
+                      label={{
+                        value: "B2 (400 pts)",
+                        fill: "#f43f5e",
+                        fontSize: 9,
+                        fontWeight: "bold",
+                        position: "insideTopLeft",
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="tefScore"
+                      stroke="#4f46e5"
+                      strokeWidth={3}
+                      activeDot={{ r: 6, strokeWidth: 0 }}
+                      dot={{ r: 4, strokeWidth: 1, stroke: "#ffffff" }}
+                    />
+                  </RechartsLineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Confidence Level & Consistency Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs flex flex-col justify-between text-left" id="confidence-consistency-card">
+            <div className="space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600 block">
+                  Indice de Précision du Modèle
+                </span>
+                <h3 className="text-sm font-extrabold text-slate-900 font-display mt-0.5">
+                  Niveau de Confiance
+                </h3>
+              </div>
+
+              {/* Confidence Indicator Display */}
+              <div className="space-y-2.5" id="confidence-percentage-bar">
+                <div className="flex justify-between items-baseline">
+                  <span className={`text-xl font-black ${
+                    stats.confidenceLevel === "Élevée" 
+                      ? "text-emerald-600" 
+                      : stats.confidenceLevel === "Moyenne" 
+                      ? "text-indigo-600" 
+                      : "text-amber-500"
+                  }`}>
+                    {stats.confidenceLevel}
+                  </span>
+                  <span className="text-xs font-semibold text-slate-400">
+                    {stats.confidencePercent}% d'indice de confiance
+                  </span>
+                </div>
+                <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                  <div
+                    className={`h-full rounded-full transition-all duration-1000 ${
+                      stats.confidenceLevel === "Élevée" 
+                        ? "bg-emerald-500" 
+                        : stats.confidenceLevel === "Moyenne" 
+                        ? "bg-indigo-500" 
+                        : "bg-amber-500"
+                    }`}
+                    style={{ width: `${stats.confidencePercent}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 leading-normal">
+                  {stats.confidenceLevel === "Faible" 
+                    ? "Peu d'épreuves effectuées. L'indice augmentera après avoir complété au moins 5 nouvelles sessions." 
+                    : "L'indice de confiance repose sur la régularité de vos scores et le volume d'historique disponible."}
+                </p>
+              </div>
+
+              {/* Consistency Metric */}
+              <div className="pt-4 border-t border-slate-100 space-y-1" id="consistency-metric-details">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600 block">
+                  Régularité des Performances
+                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-slate-800">Homogénéité :</span>
+                  <span className="text-xs font-black text-indigo-700 bg-indigo-50 border border-indigo-100/50 px-2 py-0.5 rounded-lg">
+                    {stats.consistency}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-normal mt-1">
+                  Une régularité élevée indique des compétences consolidées et un comportement stable le jour du test.
+                </p>
+              </div>
+            </div>
+
+            {/* Disclaimer block (strictly matches requirement) */}
+            <div className="p-3 bg-rose-50/50 border border-rose-100/80 rounded-xl text-left mt-4" id="predictive-disclaimer">
+              <div className="flex gap-1.5">
+                <AlertCircle size={14} className="text-rose-500 shrink-0 mt-0.5" />
+                <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wide">
+                  Clause de non-responsabilité
+                </span>
+              </div>
+              <p className="text-[10px] text-rose-700 mt-1 leading-relaxed">
+                Ce tableau de bord est un outil d'entraînement basé sur vos données d'écoute. Il s'agit uniquement d'une estimation statistique et non d'une prédiction de score officielle ou garantie pour le véritable examen du TEF.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* SUB-SKILL & QUESTION TYPE MASTERY BENTO CARDS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6" id="mastery-analysis-row">
+          {/* Cognitive Skill Mastery (Bar chart of subskills) */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs text-left" id="cognitive-mastery-card">
+            <div className="border-b border-slate-100 pb-3 mb-4">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600 block">
+                Force Cognitive
+              </span>
+              <h3 className="text-sm font-extrabold text-slate-900 font-display mt-0.5">
+                Maîtrise des Compétences d'Écoute
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Aperçu de votre taux de réussite moyen par processus de décodage linguistique.
+              </p>
+            </div>
+
+            <div className="space-y-4" id="cognitive-skills-bars">
+              {(Object.entries(skillStats) as [string, { correct: number; total: number }][]).slice(0, 5).map(([skill, stat]) => {
+                const percent = stat.total > 0 ? Math.round((stat.correct / stat.total) * 100) : 0;
+                return (
+                  <div key={skill} className="space-y-1">
+                    <div className="flex justify-between items-baseline text-xs">
+                      <span className="font-semibold text-slate-700">{formatSkillDisplay(skill)}</span>
+                      <span className="font-black text-indigo-600">{percent}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/40">
+                      <div
+                        className={`h-full rounded-full ${
+                          percent >= 75 ? "bg-emerald-500" : percent >= 50 ? "bg-indigo-500" : "bg-amber-400"
+                        }`}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Question Type Mastery (Sections of TEF Listening) */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs text-left" id="question-type-mastery-card">
+            <div className="border-b border-slate-100 pb-3 mb-4">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600 block">
+                Format d'Épreuve
+              </span>
+              <h3 className="text-sm font-extrabold text-slate-900 font-display mt-0.5">
+                Performance par Type d'Écoute
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Comparatif de votre maîtrise des formats d'épreuves de Compréhension Orale du TEF.
+              </p>
+            </div>
+
+            <div className="space-y-5" id="question-type-mastery-details">
+              {/* Section 20-30 */}
+              <div className="flex items-center gap-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl">
+                <div className="w-12 h-12 bg-white rounded-lg border border-slate-200 flex flex-col items-center justify-center shrink-0 shadow-3xs text-center">
+                  <span className="text-[9px] font-extrabold text-indigo-600 uppercase leading-none">Sec.</span>
+                  <span className="text-sm font-black text-slate-800 leading-none mt-1">20-30</span>
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex justify-between items-baseline text-xs">
+                    <span className="font-bold text-slate-700">Messages courts et quotidiens</span>
+                    <span className="font-extrabold text-indigo-700">{stats.questionTypeMastery["20-30"]}%</span>
+                  </div>
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-indigo-500 rounded-full"
+                      style={{ width: `${stats.questionTypeMastery["20-30"]}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium block">
+                    Repérage d'intentions et avis express de Sophie & Marc.
+                  </span>
+                </div>
+              </div>
+
+              {/* Section 35-40 */}
+              <div className="flex items-center gap-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl">
+                <div className="w-12 h-12 bg-white rounded-lg border border-slate-200 flex flex-col items-center justify-center shrink-0 shadow-3xs text-center">
+                  <span className="text-[9px] font-extrabold text-indigo-600 uppercase leading-none">Sec.</span>
+                  <span className="text-sm font-black text-slate-800 leading-none mt-1">35-40</span>
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex justify-between items-baseline text-xs">
+                    <span className="font-bold text-slate-700">Chroniques et exposés longs</span>
+                    <span className="font-extrabold text-indigo-700">{stats.questionTypeMastery["35-40"]}%</span>
+                  </div>
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-indigo-500 rounded-full"
+                      style={{ width: `${stats.questionTypeMastery["35-40"]}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium block">
+                    Double négation, thèses soutenues et arguments complexes.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderHistoryPage = () => {
     const sortedHistory = [...adaptiveHistory].sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
@@ -2663,6 +3404,20 @@ export default function App() {
               </span>
             )}
           </button>
+          <button
+            onClick={() => {
+              setActiveTab("predictions");
+            }}
+            className={`px-3 md:px-5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "predictions"
+                ? "bg-white text-indigo-600 shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <TrendingUp size={14} />
+            <span className="hidden sm:inline">Prédictions B2</span>
+            <span className="sm:hidden">Préd.</span>
+          </button>
         </div>
 
         <div className="flex items-center gap-4 md:gap-6">
@@ -2989,6 +3744,8 @@ export default function App() {
         <section className="flex-1 p-6 md:p-8 flex flex-col gap-6 overflow-y-auto bg-slate-50">
           {activeTab === "history" ? (
             renderHistoryPage()
+          ) : activeTab === "predictions" ? (
+            renderPredictionsPage()
           ) : !exercise && !loading ? (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -3618,9 +4375,37 @@ export default function App() {
               <h3 className="text-lg font-bold text-slate-800 font-display mb-1">
                 Conception de l'enregistrement de l'examen...
               </h3>
-              <p className="text-xs text-slate-400 mb-8 animate-pulse">
-                Génération du dialogue {difficulty} ({questionType === "mixed" ? "Mixte 20-40" : `Section ${questionType}`} • {durationSec}s) & Modulations TTS natives de Sophie et Marc.
+              <p className="text-xs text-slate-400 mb-6 animate-pulse">
+                Génération du dialogue {difficulty} ({questionType === "mixed" ? "Mixte 20-40" : `Section ${questionType}`} • {durationSec}s) & Modulations TTS.
               </p>
+
+              {/* Sequential AI Pipeline Checklist */}
+              <div className="mb-8 max-w-xs mx-auto text-left space-y-2 border-t border-b border-slate-100 py-4">
+                <div className="flex items-center gap-2.5 text-xs">
+                  <span className={`w-2.5 h-2.5 rounded-full flex items-center justify-center ${generationStep === "conversation" ? "bg-indigo-600 animate-pulse" : "bg-emerald-500"}`}></span>
+                  <span className={generationStep === "conversation" ? "font-bold text-slate-800" : "text-slate-400"}>
+                    1. AI Conversation Generator {generationStep !== "conversation" ? "✓" : "(En cours...)"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5 text-xs">
+                  <span className={`w-2.5 h-2.5 rounded-full flex items-center justify-center ${generationStep === "questions" ? "bg-indigo-600 animate-pulse" : (generationStep === "audio" || generationStep === "idle") ? "bg-emerald-500" : "bg-slate-200"}`}></span>
+                  <span className={generationStep === "questions" ? "font-bold text-slate-800" : "text-slate-400"}>
+                    2. AI Question Generator {(generationStep === "audio" || generationStep === "idle") ? "✓" : generationStep === "questions" ? "(En cours...)" : "(En attente)"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5 text-xs">
+                  <span className={`w-2.5 h-2.5 rounded-full flex items-center justify-center ${generationStep === "audio" ? "bg-indigo-600 animate-pulse" : "bg-slate-200"}`}></span>
+                  <span className={generationStep === "audio" ? "font-bold text-slate-800" : "text-slate-400"}>
+                    3. AI Voice Synthesis {generationStep === "audio" ? "(En cours...)" : (generationStep === "idle" && exercise) ? "✓" : "(En attente)"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5 text-xs">
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-200"></span>
+                  <span className="text-slate-400 font-medium">
+                    4. Scoring Engine & Coach (Prêt)
+                  </span>
+                </div>
+              </div>
 
               <div className="p-5 bg-indigo-50/55 border border-indigo-100 rounded-xl text-left max-w-md mx-auto flex gap-3.5">
                 <div className="p-2 bg-white text-indigo-600 rounded-lg shadow-xs shrink-0 h-8 w-8 flex items-center justify-center">

@@ -50,6 +50,8 @@ import {
   Brain,
   TrendingUp,
   LineChart,
+  Download,
+  Upload,
 } from "lucide-react";
 
 // Types
@@ -94,7 +96,7 @@ interface AdaptiveHistoryEntry {
   timestamp: string;
   topic: string;
   difficulty: "B1" | "B2" | "C1";
-  questionType: "20-30" | "35-40" | "mixed";
+  questionType: "20-30" | "35-40" | "interview" | "mixed";
   score: number;
   total: number;
   elapsedTime: number;
@@ -142,18 +144,18 @@ const LOADING_TIPS = [
 ];
 
 // Simple bold tag parser: **text** -> <strong>text</strong>
-const parseBoldText = (text: string) => {
+const parseBoldText = (text: string, isLight: boolean = false) => {
   const parts = text.split(/\*\*([^*]+)\*\*/g);
   return parts.map((part, i) => {
     if (i % 2 === 1) {
-      return <strong key={i} className="font-bold text-white">{part}</strong>;
+      return <strong key={i} className={`font-bold ${isLight ? "text-indigo-600 font-extrabold" : "text-white"}`}>{part}</strong>;
     }
     return part;
   });
 };
 
 // Simple dynamic Markdown parser to format AI Coach feedback beautifully
-const renderMarkdown = (text: string) => {
+const renderMarkdown = (text: string, isLight: boolean = false) => {
   if (!text) return null;
   
   const lines = text.split("\n");
@@ -167,28 +169,28 @@ const renderMarkdown = (text: string) => {
     // Check for headers
     if (trimmed.startsWith("###")) {
       return (
-        <h3 key={idx} className="text-sm font-extrabold text-indigo-300 mt-4 mb-2 flex items-center gap-1.5 font-display">
+        <h3 key={idx} className={`text-sm font-extrabold ${isLight ? "text-indigo-600" : "text-indigo-300"} mt-4 mb-2 flex items-center gap-1.5 font-display`}>
           {trimmed.replace(/^###\s*/, "")}
         </h3>
       );
     }
     if (trimmed.startsWith("####")) {
       return (
-        <h4 key={idx} className="text-xs font-black uppercase tracking-wider text-pink-400 mt-4 mb-2 font-display">
+        <h4 key={idx} className={`text-xs font-black uppercase tracking-wider ${isLight ? "text-pink-600" : "text-pink-400"} mt-4 mb-2 font-display`}>
           {trimmed.replace(/^####\s*/, "")}
         </h4>
       );
     }
     if (trimmed.startsWith("##")) {
       return (
-        <h2 key={idx} className="text-base font-extrabold text-slate-100 mt-5 mb-2 font-display">
+        <h2 key={idx} className={`text-base font-extrabold ${isLight ? "text-slate-800" : "text-slate-100"} mt-5 mb-2 font-display`}>
           {trimmed.replace(/^##\s*/, "")}
         </h2>
       );
     }
     if (trimmed.startsWith("#")) {
       return (
-        <h1 key={idx} className="text-lg font-black text-slate-100 mt-6 mb-3 font-display">
+        <h1 key={idx} className={`text-lg font-black ${isLight ? "text-slate-900" : "text-slate-100"} mt-6 mb-3 font-display`}>
           {trimmed.replace(/^#\s*/, "")}
         </h1>
       );
@@ -199,9 +201,9 @@ const renderMarkdown = (text: string) => {
       const rawContent = trimmed.replace(/^[-*]\s*/, "");
       return (
         <div key={idx} className="flex items-start gap-2.5 my-2.5 pl-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0 animate-pulse" />
-          <p className="text-xs text-slate-300 leading-relaxed flex-1">
-            {parseBoldText(rawContent)}
+          <span className={`w-1.5 h-1.5 rounded-full ${isLight ? "bg-indigo-500" : "bg-indigo-400 animate-pulse"} mt-1.5 shrink-0`} />
+          <p className={`text-xs ${isLight ? "text-slate-600" : "text-slate-300"} leading-relaxed flex-1`}>
+            {parseBoldText(rawContent, isLight)}
           </p>
         </div>
       );
@@ -209,8 +211,8 @@ const renderMarkdown = (text: string) => {
     
     // Normal paragraph
     return (
-      <p key={idx} className="text-xs md:text-sm text-slate-300 leading-relaxed my-2">
-        {parseBoldText(trimmed)}
+      <p key={idx} className={`text-xs md:text-sm ${isLight ? "text-slate-600" : "text-slate-300"} leading-relaxed my-2`}>
+        {parseBoldText(trimmed, isLight)}
       </p>
     );
   });
@@ -581,14 +583,17 @@ export default function App() {
   const [selectedTopic, setSelectedTopic] = useState<string>("random");
   const [difficulty, setDifficulty] = useState<"B1" | "B2" | "C1">("B2");
   const [activeDifficulty, setActiveDifficulty] = useState<"B1" | "B2" | "C1">("B2");
-  const [questionType, setQuestionType] = useState<"20-30" | "35-40" | "mixed">("mixed");
-  const [activeQuestionType, setActiveQuestionType] = useState<"20-30" | "35-40" | "mixed">("mixed");
+  const [questionType, setQuestionType] = useState<"20-30" | "35-40" | "interview" | "mixed">("mixed");
+  const [activeQuestionType, setActiveQuestionType] = useState<"20-30" | "35-40" | "interview" | "mixed">("mixed");
   const [durationSec, setDurationSec] = useState<60 | 90 | 120>(90);
   const [activeDurationSec, setActiveDurationSec] = useState<number>(90);
   const [loading, setLoading] = useState<boolean>(false);
   const [generationStep, setGenerationStep] = useState<"conversation" | "questions" | "audio" | "idle">("idle");
   const [loadingTipIndex, setLoadingTipIndex] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [diagInfo, setDiagInfo] = useState<any | null>(null);
+  const [loadingDiag, setLoadingDiag] = useState<boolean>(false);
+  const [showDiagPanel, setShowDiagPanel] = useState<boolean>(false);
   const [isDailyMissionSession, setIsDailyMissionSession] = useState<boolean>(false);
   const dailyMission = getDailyMission();
 
@@ -693,6 +698,11 @@ export default function App() {
   const [randomVoices, setRandomVoices] = useState<boolean>(true);
   const [showScore, setShowScore] = useState<boolean>(true);
   const [saveSession, setSaveSession] = useState<boolean>(true);
+  const [disableWebSpeech, setDisableWebSpeech] = useState<boolean>(() => {
+    return localStorage.getItem("tef_disable_webspeech") === "true";
+  });
+
+  const isWebSpeechActive = isWebSpeechFallback && !disableWebSpeech;
 
   // Audio Playback State
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -1004,18 +1014,18 @@ export default function App() {
 
   // Synchronize playback speed to web speech if active
   useEffect(() => {
-    if (isWebSpeechFallback && webSpeechPlaying) {
+    if (isWebSpeechActive && webSpeechPlaying) {
       window.speechSynthesis.cancel();
       speakDialogueFromLine(webSpeechCurrentIndex);
     }
-  }, [playbackRate]);
+  }, [playbackRate, isWebSpeechActive]);
 
   // Synchronize volume and mute to web speech if active
   useEffect(() => {
-    if (isWebSpeechFallback && webSpeechPlaying && webSpeechUtteranceRef.current) {
+    if (isWebSpeechActive && webSpeechPlaying && webSpeechUtteranceRef.current) {
       webSpeechUtteranceRef.current.volume = isMuted ? 0 : volume;
     }
-  }, [volume, isMuted]);
+  }, [volume, isMuted, isWebSpeechActive]);
 
   // Update loading tip periodically
   useEffect(() => {
@@ -1090,6 +1100,105 @@ export default function App() {
     };
   }, [exercise, quizFinished]);
 
+  // Export history to JSON file
+  const exportHistory = () => {
+    const dataToExport = {
+      tef_total_questions: localStorage.getItem("tef_total_questions"),
+      tef_correct_answers: localStorage.getItem("tef_correct_answers"),
+      tef_total_sessions: localStorage.getItem("tef_total_sessions"),
+      tef_topic_stats: localStorage.getItem("tef_topic_stats"),
+      tef_skill_stats: localStorage.getItem("tef_skill_stats"),
+      tef_today_stats: localStorage.getItem("tef_today_stats"),
+      tef_week_stats: localStorage.getItem("tef_week_stats"),
+      tef_adaptive_history: localStorage.getItem("tef_adaptive_history"),
+      tef_historical_mastery: localStorage.getItem("tef_historical_mastery"),
+      tef_adaptive_complexity: localStorage.getItem("tef_adaptive_complexity"),
+      tef_adaptive_vocabulary: localStorage.getItem("tef_adaptive_vocabulary"),
+      tef_adaptive_implied: localStorage.getItem("tef_adaptive_implied"),
+      tef_adaptive_speed: localStorage.getItem("tef_adaptive_speed"),
+    };
+    
+    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tef_historique_study_backup_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Import history from JSON file
+  const handleImportHistory = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        
+        if (!data.tef_adaptive_history) {
+          throw new Error("Fichier invalide : clé d'historique manquante.");
+        }
+
+        // Save keys to localStorage
+        Object.entries(data).forEach(([key, val]) => {
+          if (val !== null && val !== undefined) {
+            localStorage.setItem(key, typeof val === "string" ? val : JSON.stringify(val));
+          }
+        });
+
+        // Reload states
+        const storedTotal = localStorage.getItem("tef_total_questions");
+        const storedCorrect = localStorage.getItem("tef_correct_answers");
+        const storedSessions = localStorage.getItem("tef_total_sessions");
+        const storedTopicStats = localStorage.getItem("tef_topic_stats");
+        const storedSkillStats = localStorage.getItem("tef_skill_stats");
+        const storedTodayStats = localStorage.getItem("tef_today_stats");
+        const storedWeekStats = localStorage.getItem("tef_week_stats");
+        const storedAdaptiveHistory = localStorage.getItem("tef_adaptive_history");
+        const storedHistoricalMastery = localStorage.getItem("tef_historical_mastery");
+
+        if (storedTotal) setTotalQuestions(parseInt(storedTotal, 10));
+        if (storedCorrect) setCorrectQuestions(parseInt(storedCorrect, 10));
+        if (storedSessions) setTotalSessions(parseInt(storedSessions, 10));
+        if (storedTopicStats) setTopicStats(JSON.parse(storedTopicStats));
+        if (storedSkillStats) setSkillStats(JSON.parse(storedSkillStats));
+        if (storedTodayStats) setTodayStats(JSON.parse(storedTodayStats));
+        if (storedWeekStats) setWeekStats(JSON.parse(storedWeekStats));
+        if (storedAdaptiveHistory) setAdaptiveHistory(JSON.parse(storedAdaptiveHistory));
+        if (storedHistoricalMastery) setHistoricalMastery(JSON.parse(storedHistoricalMastery));
+
+        alert("Historique d'apprentissage importé avec succès !");
+      } catch (err: any) {
+        alert("Erreur lors de l'importation de l'historique : " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Fetch real-time diagnostics from the backend
+  const fetchDiagnostics = async () => {
+    setLoadingDiag(true);
+    setDiagInfo(null);
+    setShowDiagPanel(true);
+    try {
+      const response = await fetch("/api/logs");
+      if (response.ok) {
+        const data = await response.json();
+        setDiagInfo(data);
+      } else {
+        setDiagInfo({ error: `Le serveur a renvoyé un statut d'erreur ${response.status}.` });
+      }
+    } catch (err: any) {
+      setDiagInfo({ error: "Impossible d'établir la connexion aux diagnostics : " + err.message });
+    } finally {
+      setLoadingDiag(false);
+    }
+  };
+
   // Reset Stats function
   const handleResetStats = () => {
     if (window.confirm("Êtes-vous sûr de vouloir réinitialiser toutes vos statistiques de progression ?")) {
@@ -1140,7 +1249,7 @@ export default function App() {
   const handleGenerateExercise = async (overrides?: {
     topic?: string;
     difficulty?: "B1" | "B2" | "C1";
-    questionType?: "20-30" | "35-40" | "mixed";
+    questionType?: "20-30" | "35-40" | "interview" | "mixed";
     durationSec?: number;
     isDaily?: boolean;
   }) => {
@@ -1201,23 +1310,28 @@ export default function App() {
       });
     const weakSkills = sortedSkills.map(s => s.skill);
 
-    let qTypeAccuracy = { "20-30": { correct: 0, total: 0 }, "35-40": { correct: 0, total: 0 } };
+    let qTypeAccuracy = { "20-30": { correct: 0, total: 0 }, "35-40": { correct: 0, total: 0 }, "interview": { correct: 0, total: 0 } };
     adaptiveHistory.forEach(h => {
-      if (h.questionType === "20-30" || h.questionType === "35-40") {
+      if (h.questionType === "20-30" || h.questionType === "35-40" || h.questionType === "interview") {
         qTypeAccuracy[h.questionType].correct += h.score;
         qTypeAccuracy[h.questionType].total += 5;
       }
     });
-    let weakQuestionType: "20-30" | "35-40" | "mixed" = "mixed";
+    let weakQuestionType: "20-30" | "35-40" | "interview" | "mixed" = "mixed";
     const t2030 = qTypeAccuracy["20-30"];
     const t3540 = qTypeAccuracy["35-40"];
+    const tInterview = qTypeAccuracy["interview"] || { correct: 0, total: 0 };
     const acc2030 = t2030.total > 0 ? t2030.correct / t2030.total : 1.0;
     const acc3540 = t3540.total > 0 ? t3540.correct / t3540.total : 1.0;
-    if (t2030.total > 0 || t3540.total > 0) {
-      if (acc2030 < acc3540) {
+    const accInterview = tInterview.total > 0 ? tInterview.correct / tInterview.total : 1.0;
+    if (t2030.total > 0 || t3540.total > 0 || tInterview.total > 0) {
+      const minAcc = Math.min(acc2030, acc3540, accInterview);
+      if (minAcc === acc2030 && t2030.total > 0) {
         weakQuestionType = "20-30";
-      } else if (acc3540 < acc2030) {
+      } else if (minAcc === acc3540 && t3540.total > 0) {
         weakQuestionType = "35-40";
+      } else if (minAcc === accInterview && tInterview.total > 0) {
+        weakQuestionType = "interview";
       }
     }
 
@@ -1320,7 +1434,12 @@ export default function App() {
       await generateTTS(data.dialogue, actualDifficulty);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Impossible de générer l'entraînement. Veuillez réessayer.");
+      const rawMsg = err.message || String(err);
+      let errorMsg = rawMsg;
+      if (rawMsg.toLowerCase().includes("load failed") || rawMsg.toLowerCase().includes("failed to fetch") || rawMsg.toLowerCase().includes("networkerror")) {
+        errorMsg = "Échec de connexion réseau (Load failed). Cela se produit généralement lors du démarrage initial (Cold Start) du serveur sur Cloud Run ou à cause d'un délai d'attente dépassé (timeout) de votre navigateur. Veuillez simplement cliquer à nouveau sur 'START' pour relancer la génération.";
+      }
+      setError(errorMsg);
     } finally {
       setLoading(false);
       setGenerationStep("idle");
@@ -1352,12 +1471,18 @@ export default function App() {
         throw new Error("No audioUrl in response");
       }
     } catch (err: any) {
-      console.warn("TTS Generation failed, falling back to Web Speech API:", err);
-      setIsWebSpeechFallback(true);
-      setDuration(dialogue.length * 5);
-      setCurrentTime(0);
-      setWebSpeechCurrentIndex(0);
-      setWebSpeechPlaying(false);
+      if (disableWebSpeech) {
+        console.error("TTS Generation failed:", err);
+        setError("La génération vocale premium (Gemini TTS) a échoué. Veuillez vérifier vos clés d'API (Settings > Secrets) ou réessayer ultérieurement. (La voix de secours Web Speech est actuellement désactivée dans vos options)");
+        setIsWebSpeechFallback(false);
+      } else {
+        console.warn("TTS Generation failed, falling back to Web Speech API:", err);
+        setIsWebSpeechFallback(true);
+        setDuration(dialogue.length * 5);
+        setCurrentTime(0);
+        setWebSpeechCurrentIndex(0);
+        setWebSpeechPlaying(false);
+      }
     } finally {
       setLoadingAudio(false);
     }
@@ -1499,7 +1624,7 @@ export default function App() {
 
   // Audio actions
   const togglePlay = () => {
-    if (isWebSpeechFallback) {
+    if (isWebSpeechActive) {
       if (webSpeechPlaying) {
         pauseWebSpeech();
       } else {
@@ -1518,7 +1643,7 @@ export default function App() {
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const seekTime = parseFloat(e.target.value);
-    if (isWebSpeechFallback) {
+    if (isWebSpeechActive) {
       if (exercise && exercise.dialogue) {
         const lineIndex = Math.min(
           exercise.dialogue.length - 1,
@@ -1543,7 +1668,7 @@ export default function App() {
     const vol = parseFloat(e.target.value);
     setVolume(vol);
     setIsMuted(vol === 0);
-    if (!isWebSpeechFallback) {
+    if (!isWebSpeechActive) {
       const audio = audioRef.current;
       if (audio) {
         audio.volume = vol;
@@ -1554,7 +1679,7 @@ export default function App() {
   const toggleMute = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
-    if (!isWebSpeechFallback) {
+    if (!isWebSpeechActive) {
       const audio = audioRef.current;
       if (audio) {
         audio.muted = nextMuted;
@@ -1572,7 +1697,7 @@ export default function App() {
   };
 
   const skipBackward = () => {
-    if (isWebSpeechFallback) {
+    if (isWebSpeechActive) {
       const nextIndex = Math.max(0, webSpeechCurrentIndex - 1);
       setWebSpeechCurrentIndex(nextIndex);
       setCurrentTime(nextIndex * 5);
@@ -1590,7 +1715,7 @@ export default function App() {
   };
 
   const skipForward = () => {
-    if (isWebSpeechFallback) {
+    if (isWebSpeechActive) {
       if (exercise && exercise.dialogue) {
         const nextIndex = Math.min(exercise.dialogue.length - 1, webSpeechCurrentIndex + 1);
         setWebSpeechCurrentIndex(nextIndex);
@@ -1627,7 +1752,7 @@ export default function App() {
     if (!exercise) return;
 
     // Stop playback if playing
-    if (isWebSpeechFallback) {
+    if (isWebSpeechActive) {
       pauseWebSpeech();
     } else {
       const audio = audioRef.current;
@@ -1748,7 +1873,7 @@ export default function App() {
         timestamp: new Date().toISOString(),
         topic: exercise.topic || "general",
         difficulty: activeDifficulty,
-        questionType: activeQuestionType === "mixed" ? "mixed" : (activeQuestionType as "20-30" | "35-40"),
+        questionType: activeQuestionType === "mixed" ? "mixed" : (activeQuestionType as "20-30" | "35-40" | "interview"),
         score: score,
         total: 5,
         elapsedTime: elapsedTime,
@@ -2318,7 +2443,7 @@ export default function App() {
           <div className="absolute right-0 top-0 w-32 h-32 bg-indigo-50/20 rounded-bl-full pointer-events-none" />
           
           <div className="markdown-body text-xs md:text-sm text-slate-700 leading-relaxed space-y-4">
-            {renderMarkdown(feedback)}
+            {renderMarkdown(feedback, true)}
           </div>
         </div>
       </div>
@@ -2501,6 +2626,7 @@ export default function App() {
     const qtStats: { [key: string]: { correct: number; total: number } } = {
       "20-30": { correct: 0, total: 0 },
       "35-40": { correct: 0, total: 0 },
+      "interview": { correct: 0, total: 0 },
       "mixed": { correct: 0, total: 0 },
     };
 
@@ -2516,7 +2642,7 @@ export default function App() {
     Object.entries(qtStats).forEach(([type, stat]) => {
       questionTypeMastery[type] = stat.total > 0
         ? Math.round((stat.correct / stat.total) * 100)
-        : (type === "20-30" ? 70 : type === "35-40" ? 55 : 62);
+        : (type === "20-30" ? 70 : type === "35-40" ? 55 : type === "interview" ? 60 : 62);
     });
 
     let baseProb = 1 / (1 + Math.exp(-(avgTefScore - 380) / 45));
@@ -3087,7 +3213,7 @@ export default function App() {
                 </div>
                 <div className="flex-1 space-y-1">
                   <div className="flex justify-between items-baseline text-xs">
-                    <span className="font-bold text-slate-700">Chroniques et exposés longs</span>
+                    <span className="font-bold text-slate-700">Débats et chroniques longs</span>
                     <span className="font-extrabold text-indigo-700">{stats.questionTypeMastery["35-40"]}%</span>
                   </div>
                   <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
@@ -3098,6 +3224,29 @@ export default function App() {
                   </div>
                   <span className="text-[10px] text-slate-400 font-medium block">
                     Double négation, thèses soutenues et arguments complexes.
+                  </span>
+                </div>
+              </div>
+
+              {/* Section D - Interviews */}
+              <div className="flex items-center gap-4 bg-slate-50 border border-slate-100 p-3.5 rounded-xl">
+                <div className="w-12 h-12 bg-white rounded-lg border border-slate-200 flex flex-col items-center justify-center shrink-0 shadow-3xs text-center">
+                  <span className="text-[9px] font-extrabold text-indigo-600 uppercase leading-none">Sec.</span>
+                  <span className="text-sm font-black text-slate-800 leading-none mt-1">Interv</span>
+                </div>
+                <div className="flex-1 space-y-1">
+                  <div className="flex justify-between items-baseline text-xs">
+                    <span className="font-bold text-slate-700">Interviews de spécialistes (Sec. D)</span>
+                    <span className="font-extrabold text-indigo-700">{stats.questionTypeMastery["interview"]}%</span>
+                  </div>
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-indigo-500 rounded-full"
+                      style={{ width: `${stats.questionTypeMastery["interview"]}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-medium block">
+                    Questions de journalistes, arguments d'experts et analyses d'actu.
                   </span>
                 </div>
               </div>
@@ -3125,14 +3274,38 @@ export default function App() {
               Consultez vos évaluations passées, lancez des replays interactifs, révisez les transcriptions orales, et accédez à l'analyse corrective de votre Coach IA.
             </p>
           </div>
-          <button
-            onClick={handleResetStats}
-            disabled={adaptiveHistory.length === 0}
-            className="flex items-center gap-2 py-2 px-4 border border-red-200 hover:bg-red-50 disabled:opacity-35 disabled:cursor-not-allowed text-red-600 font-bold text-xs uppercase tracking-wider rounded-xl transition cursor-pointer shrink-0"
-          >
-            <Trash2 size={14} />
-            Effacer tout l'historique
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              onClick={exportHistory}
+              disabled={adaptiveHistory.length === 0}
+              className="flex items-center gap-2 py-2 px-4 border border-slate-200 hover:bg-slate-50 disabled:opacity-35 disabled:cursor-not-allowed text-slate-600 font-bold text-xs uppercase tracking-wider rounded-xl transition cursor-pointer"
+              title="Exporter votre historique de préparation au format JSON"
+            >
+              <Download size={14} />
+              Exporter
+            </button>
+            <label
+              className="flex items-center gap-2 py-2 px-4 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold text-xs uppercase tracking-wider rounded-xl transition cursor-pointer"
+              title="Importer un fichier de sauvegarde JSON pour restaurer votre progression"
+            >
+              <Upload size={14} />
+              Importer
+              <input
+                type="file"
+                accept=".json"
+                onChange={handleImportHistory}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={handleResetStats}
+              disabled={adaptiveHistory.length === 0}
+              className="flex items-center gap-2 py-2 px-4 border border-red-200 hover:bg-red-50 disabled:opacity-35 disabled:cursor-not-allowed text-red-600 font-bold text-xs uppercase tracking-wider rounded-xl transition cursor-pointer"
+            >
+              <Trash2 size={14} />
+              Effacer
+            </button>
+          </div>
         </div>
 
         {sortedHistory.length === 0 ? (
@@ -3195,7 +3368,7 @@ export default function App() {
                           Niveau {entry.difficulty}
                         </span>
                         <span className="text-[10px] bg-indigo-50 text-indigo-700 font-medium px-2 py-0.5 rounded-full border border-indigo-100/50">
-                          {entry.questionType === "mixed" ? "Section Mixte" : `Section ${entry.questionType}`}
+                          {entry.questionType === "mixed" ? "Section Mixte" : entry.questionType === "interview" ? "Section Interview" : `Section ${entry.questionType}`}
                         </span>
                       </div>
                       <h3 className="text-base font-extrabold text-slate-800 line-clamp-1 leading-tight pr-4">
@@ -3542,9 +3715,9 @@ export default function App() {
 
               {/* Questions/Section Selector */}
               <div className="space-y-1 border-t border-slate-100/70 pt-3">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Questions</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Questions / Format</span>
                 <div className="space-y-1">
-                  {(["20-30", "35-40", "mixed"] as const).map((type) => {
+                  {(["20-30", "35-40", "interview", "mixed"] as const).map((type) => {
                     const isSelected = questionType === type;
                     return (
                       <button
@@ -3559,7 +3732,7 @@ export default function App() {
                             {isSelected ? "☑" : "☐"}
                           </span>
                           <span>
-                            {type === "20-30" ? "Questions 20–30 (Short)" : type === "35-40" ? "Questions 35–40 (Long)" : "Mixed Questions"}
+                            {type === "20-30" ? "Questions 20–30 (Short)" : type === "35-40" ? "Questions 35–40 (Long Debate)" : type === "interview" ? "Questions 35–40 (Radio Interview)" : "Mixed Questions"}
                           </span>
                         </span>
                       </button>
@@ -3772,6 +3945,30 @@ export default function App() {
                   <span>Save Session</span>
                 </span>
               </button>
+
+              {/* Disable Web Speech toggle */}
+              <button
+                onClick={() => {
+                  const nextVal = !disableWebSpeech;
+                  setDisableWebSpeech(nextVal);
+                  localStorage.setItem("tef_disable_webspeech", nextVal ? "true" : "false");
+                  if (nextVal) {
+                    setIsWebSpeechFallback(false);
+                    if (window.speechSynthesis) {
+                      window.speechSynthesis.cancel();
+                    }
+                    setWebSpeechPlaying(false);
+                  }
+                }}
+                className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50 transition text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <span className={`text-base leading-none ${disableWebSpeech ? "text-indigo-600 font-bold" : "text-slate-300"}`}>
+                    {disableWebSpeech ? "☑" : "☐"}
+                  </span>
+                  <span>Désactiver Web Speech</span>
+                </span>
+              </button>
             </div>
           </section>
 
@@ -3791,6 +3988,79 @@ export default function App() {
 
         {/* RIGHT AREA: Active Test Center / Questionnaire */}
         <section className="flex-1 p-6 md:p-8 flex flex-col gap-6 overflow-y-auto bg-slate-50">
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl text-xs flex items-start justify-between gap-3 shadow-xs max-w-4xl mx-auto w-full shrink-0"
+            >
+              <div className="flex items-start gap-2.5 w-full">
+                <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                <div className="space-y-1 w-full">
+                  <p className="font-bold">Une erreur est survenue lors de la génération :</p>
+                  <p className="text-red-700 leading-relaxed font-mono text-[11px] bg-red-100/40 p-2 rounded-md border border-red-100">{error}</p>
+                  <p className="text-slate-500">Veuillez vérifier vos clés d'API (Settings &gt; Secrets) ou réessayer ultérieurement.</p>
+                  <div className="pt-2">
+                    <button
+                      onClick={fetchDiagnostics}
+                      className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer text-xs flex items-center gap-1"
+                    >
+                      🛠️ Diagnostiquer l'erreur (voir l'état du serveur)
+                    </button>
+                  </div>
+                  {showDiagPanel && (
+                    <div className="mt-3 p-3 bg-slate-900 text-slate-100 rounded-lg border border-slate-800 font-mono text-[10px] space-y-2 max-w-full overflow-x-auto">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                        <span className="font-bold text-slate-400">DIAGNOSTIC DU SERVEUR</span>
+                        <button
+                          onClick={() => {
+                            setShowDiagPanel(false);
+                            setDiagInfo(null);
+                          }}
+                          className="text-slate-400 hover:text-slate-200 cursor-pointer"
+                        >
+                          ✕ Fermer
+                        </button>
+                      </div>
+                      {loadingDiag ? (
+                        <div className="animate-pulse py-1">Connexion et récupération des logs en cours...</div>
+                      ) : diagInfo ? (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[10px] pb-1.5 border-b border-slate-800/50">
+                            <div>Clé d'API configurée : <span className={diagInfo.env?.hasApiKey ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>{diagInfo.env?.hasApiKey ? "OUI (Active)" : "NON (Manquante)"}</span></div>
+                            <div>Mode Node.js : <span className="text-indigo-400">{diagInfo.env?.nodeEnv || "inconnu"}</span></div>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-slate-400 font-bold">Dernières erreurs enregistrées :</span>
+                            {diagInfo.logs && diagInfo.logs.length > 0 ? (
+                              <div className="max-h-40 overflow-y-auto space-y-1 text-red-300 pr-1">
+                                {diagInfo.logs.map((log: any, idx: number) => (
+                                  <div key={idx} className="border-b border-slate-800 pb-1.5 last:border-0">
+                                    <div className="text-slate-400 font-bold text-[9px]">{new Date(log.timestamp).toLocaleTimeString()} - {log.context}</div>
+                                    <div className="whitespace-pre-wrap">{log.message}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-emerald-400 leading-relaxed">Aucune erreur récente signalée sur le serveur. Cela indique un problème de réseau côté client (comme une expiration de session ou déconnexion). Veuillez simplement réessayer.</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-amber-400">Impossible de joindre le serveur de diagnostics. Le serveur est peut-être éteint ou inaccessible.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setError(null)}
+                className="text-red-400 hover:text-red-600 transition-colors cursor-pointer p-0.5 text-sm"
+              >
+                ✕
+              </button>
+            </motion.div>
+          )}
           {activeTab === "history" ? (
             renderHistoryPage()
           ) : activeTab === "predictions" ? (
@@ -4377,7 +4647,8 @@ export default function App() {
                             </td>
                             <td className="py-3 px-3 text-slate-500 whitespace-nowrap">
                               {session.questionType === "20-30" ? "Sec. B/C (20-30)" :
-                               session.questionType === "35-40" ? "Sec. D (35-40)" : "Mixte (20-40)"}
+                               session.questionType === "35-40" ? "Sec. D (35-40)" :
+                               session.questionType === "interview" ? "Sec. D (Interview)" : "Mixte (20-40)"}
                             </td>
                             <td className="py-3 px-3 text-center">
                               <span className={`inline-block font-black px-2 py-0.5 rounded text-[11px] font-mono ${
@@ -4425,7 +4696,7 @@ export default function App() {
                 Conception de l'enregistrement de l'examen...
               </h3>
               <p className="text-xs text-slate-400 mb-6 animate-pulse">
-                Génération du dialogue {difficulty} ({questionType === "mixed" ? "Mixte 20-40" : `Section ${questionType}`} • {durationSec}s) & Modulations TTS.
+                Génération du dialogue {difficulty} ({questionType === "mixed" ? "Mixte 20-40" : questionType === "interview" ? "Section Interview (Sec. D)" : `Section ${questionType}`} • {durationSec}s) & Modulations TTS.
               </p>
 
               {/* Sequential AI Pipeline Checklist */}
@@ -4556,7 +4827,7 @@ export default function App() {
                     <span className="text-xs font-bold text-[#1db954] animate-pulse">SYNTHÈSE VOCALE ACTIVE...</span>
                     <span className="text-[10px] text-zinc-400 mt-1">Préparation du dialogue de Sophie & Marc</span>
                   </div>
-                ) : (!audioUrl && !isWebSpeechFallback) ? (
+                ) : (!audioUrl && !isWebSpeechActive) ? (
                   <div className="py-6 text-center border-2 border-dashed border-zinc-800 rounded-xl bg-zinc-900/30">
                     <span className="text-xs text-amber-500 font-semibold">Génération audio non initiée</span>
                     <p className="text-[10px] text-zinc-500 mt-1">Cliquez sur START à gauche pour lancer la simulation</p>
@@ -4566,9 +4837,9 @@ export default function App() {
                     {/* Header: Status & Info */}
                     <div className="flex items-center justify-between text-zinc-100 font-display">
                       <div className="flex items-center gap-2">
-                        <span className={`${isWebSpeechFallback ? 'text-amber-500' : 'text-[#1db954]'} font-bold text-sm animate-pulse`}>●</span>
-                        <span className={`text-[10px] font-black uppercase tracking-widest ${isWebSpeechFallback ? 'text-amber-500' : 'text-[#1db954]'}`}>
-                          {isWebSpeechFallback ? "VOIX DE SECOURS ACTIVE (WEB SPEECH)" : "CONVERSATION AUDIO"}
+                        <span className={`${isWebSpeechActive ? 'text-amber-500' : 'text-[#1db954]'} font-bold text-sm animate-pulse`}>●</span>
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${isWebSpeechActive ? 'text-amber-500' : 'text-[#1db954]'}`}>
+                          {isWebSpeechActive ? "VOIX DE SECOURS ACTIVE (WEB SPEECH)" : "CONVERSATION AUDIO"}
                         </span>
                       </div>
                       <div className="text-[10px] text-zinc-400 font-semibold bg-zinc-800/80 px-2 py-0.5 rounded-md border border-zinc-700/50">

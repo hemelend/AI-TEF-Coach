@@ -205,7 +205,7 @@ app.post("/api/generate-conversation", async (req, res) => {
     // Adaptively determine the question type if mixed/adaptive is selected
     let qType = questionType;
     if (qType === "mixed" || qType === "adaptive") {
-      if (adaptiveContext && adaptiveContext.weakQuestionType && ["20-30", "35-40", "mixed"].includes(adaptiveContext.weakQuestionType)) {
+      if (adaptiveContext && adaptiveContext.weakQuestionType && ["20-30", "35-40", "interview", "mixed"].includes(adaptiveContext.weakQuestionType)) {
         qType = adaptiveContext.weakQuestionType;
         console.log(`[Adaptive Selection] Chosen weak questionType: ${qType}`);
       } else {
@@ -230,7 +230,9 @@ app.post("/api/generate-conversation", async (req, res) => {
     if (qType === "20-30") {
       typeDescription = "Mimic the TEF Canada Section B/C (Questions 20-30) style: The exchange or messages are relatively brief, concise, and focused on public situations, short voicemails, public announcements, street polls (sondages), or brief news flashes.";
     } else if (qType === "35-40") {
-      typeDescription = "Mimic the TEF Canada Section D (Questions 35-40) style: This must be a deep, elaborate, and analytical conversation, interview, or debate between Sophie and Marc. The discussion should focus on detailed arguments, abstract reasoning, and subtle speaker positions.";
+      typeDescription = "Mimic the TEF Canada Section D (Questions 35-40) style: This must be a deep, elaborate, and analytical conversation or debate between Sophie and Marc. The discussion should focus on detailed arguments, abstract reasoning, and subtle speaker positions.";
+    } else if (qType === "interview") {
+      typeDescription = "Mimic the TEF Canada Section D (Questions 35-40) style of an official radio interview (un entretien ou une interview radiophonique). Specifically, one speaker (e.g., Sophie) plays the role of the professional radio journalist/host ('Journaliste' / 'Animateur') who asks structured, probing, and analytical questions, and the other speaker (e.g., Marc) plays the role of the invited expert/specialist ('Invité' / 'Expert') who responds with deep arguments, detailed explanations, and nuanced opinions. The conversation MUST be structured as an interview where the interviewer guides the discussion and the expert provides deep commentary on the topic.";
     } else {
       typeDescription = "A mixed comprehensive style: A solid conversational debate or exchange incorporating both general contextual discussion and detailed analytical arguments.";
     }
@@ -404,7 +406,7 @@ app.post("/api/generate-questions", async (req, res) => {
     }
 
     const level = ["B1", "B2", "C1"].includes(difficulty) ? difficulty : "B2";
-    const qType = ["20-30", "35-40", "mixed"].includes(questionType) ? questionType : "mixed";
+    const qType = ["20-30", "35-40", "interview", "mixed"].includes(questionType) ? questionType : "mixed";
 
     console.log(`[AI Question Generator] Generating 5 questions for ${level} level, type: ${qType} based on dialogue transcript.`);
 
